@@ -9,7 +9,7 @@ import (
 )
 
 // SmartGen generates thousands of payloads based on the original value's data type and structure.
-// This is the core differentiator from nuclei — we don't just replay known payloads,
+// This is the core differentiator from nuclei - we don't just replay known payloads,
 // we generate massive volumes of structurally-aware mutations to discover unexpected behavior.
 type SmartGen struct {
 	MaxPayloads int

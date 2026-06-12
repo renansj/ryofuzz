@@ -48,7 +48,7 @@ func (m *LFIModule) Detect(payload mutator.Payload, baseBody string, baseStatus 
 	for _, ind := range indicators {
 		if strings.Contains(respBody, ind) && !strings.Contains(baseBody, ind) {
 			return &Finding{Module: "lfi", Severity: "critical", Confidence: "confirmed",
-				Title: "LFI / Path Traversal — File read", Payload: payload.Value, Point: payload.Point,
+				Title: "LFI / Path Traversal - File read", Payload: payload.Value, Point: payload.Point,
 				Evidence: ind, OWASP: "A01:2021 Broken Access Control", CWE: "CWE-22"}
 		}
 	}
@@ -85,14 +85,14 @@ func (m *NoSQLiModule) Detect(payload mutator.Payload, baseBody string, baseStat
 	// Time-based
 	if strings.Contains(payload.Variant, "time") && respTime-baseTime > 4500 {
 		return &Finding{Module: "nosqli", Severity: "critical", Confidence: "high",
-			Title: "NoSQL Injection — Time-based", Payload: payload.Value, Point: payload.Point,
+			Title: "NoSQL Injection - Time-based", Payload: payload.Value, Point: payload.Point,
 			Evidence: fmt.Sprintf("delta=%dms", respTime-baseTime), OWASP: "A03:2021 Injection", CWE: "CWE-943"}
 	}
 	// Body diff significativo (auth bypass)
 	if len(respBody) != len(baseBody) && abs(len(respBody)-len(baseBody)) > 100 && respStatus == 200 {
 		if strings.Contains(payload.Variant, "bypass") || strings.Contains(payload.Variant, "ne") || strings.Contains(payload.Variant, "gt") {
 			return &Finding{Module: "nosqli", Severity: "high", Confidence: "medium",
-				Title: "NoSQL Injection — Possible auth bypass", Payload: payload.Value, Point: payload.Point,
+				Title: "NoSQL Injection - Possible auth bypass", Payload: payload.Value, Point: payload.Point,
 				Evidence: fmt.Sprintf("body_diff=%d bytes", abs(len(respBody)-len(baseBody))), OWASP: "A03:2021 Injection", CWE: "CWE-943"}
 		}
 	}
@@ -131,7 +131,7 @@ func (m *XXEModule) Detect(payload mutator.Payload, baseBody string, baseStatus 
 	for _, ind := range indicators {
 		if strings.Contains(respBody, ind) && !strings.Contains(baseBody, ind) {
 			return &Finding{Module: "xxe", Severity: "critical", Confidence: "confirmed",
-				Title: "XXE — External entity processed", Payload: payload.Value, Point: payload.Point,
+				Title: "XXE - External entity processed", Payload: payload.Value, Point: payload.Point,
 				Evidence: ind, OWASP: "A05:2021 Security Misconfiguration", CWE: "CWE-611"}
 		}
 	}
@@ -161,7 +161,7 @@ func (m *IDORModule) Detect(payload mutator.Payload, baseBody string, baseStatus
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
 	if respStatus == 200 && respBody != baseBody && len(respBody) > 50 {
 		return &Finding{Module: "idor", Severity: "high", Confidence: "medium",
-			Title: "IDOR — Access to another user object", Payload: payload.Value, Point: payload.Point,
+			Title: "IDOR - Access to another user object", Payload: payload.Value, Point: payload.Point,
 			Evidence: fmt.Sprintf("status=200, body diferente (len=%d vs baseline=%d)", len(respBody), len(baseBody)),
 			OWASP: "A01:2021 Broken Access Control", CWE: "CWE-639"}
 	}
@@ -257,7 +257,7 @@ func (m *CRLFModule) Detect(payload mutator.Payload, baseBody string, baseStatus
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
 	if _, ok := respHeaders["Injected-Header"]; ok {
 		return &Finding{Module: "crlf", Severity: "high", Confidence: "confirmed",
-			Title: "CRLF Injection — Header injected", Payload: payload.Value, Point: payload.Point,
+			Title: "CRLF Injection - Header injected", Payload: payload.Value, Point: payload.Point,
 			Evidence: "Header 'Injected-Header' present in response", OWASP: "A03:2021 Injection", CWE: "CWE-113"}
 	}
 	if strings.Contains(respBody, "<script>alert(1)</script>") && !strings.Contains(baseBody, "<script>alert(1)</script>") {

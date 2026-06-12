@@ -69,8 +69,8 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "ryofuzz",
-	Short: "ryofuzz — Offensive web vulnerability fuzzer",
-	Long: `ryofuzz — Offensive multi-class web vulnerability fuzzer
+	Short: "ryofuzz - Offensive web vulnerability fuzzer",
+	Long: `ryofuzz - Offensive multi-class web vulnerability fuzzer
 
 Automatically detects injection points in URLs, JSON body and URL-encoded body.
 Tests OWASP Top 10, OWASP API Top 10, OWASP LLM Top 10 and underground techniques.
@@ -312,7 +312,7 @@ func run(cmd *cobra.Command, args []string) error {
 			allPayloads = append(allPayloads, plds...)
 		}
 
-		// Smart payload generation (type-aware fuzzing — the core differentiator)
+		// Smart payload generation (type-aware fuzzing - the core differentiator)
 		if mode == "smart" || mode == "mutate" {
 			gen := &mutator.SmartGen{}
 			perPoint := 500
@@ -354,7 +354,7 @@ func run(cmd *cobra.Command, args []string) error {
 		// Module-based analysis (pattern matching)
 		findings := analyzer.Analyze(baseline, results, append(modules, cveProbe))
 
-		// Behavioral analysis (anomaly detection — what makes this a fuzzer, not a scanner)
+		// Behavioral analysis (anomaly detection - what makes this a fuzzer, not a scanner)
 		behaviorFindings := analyzer.BehaviorAnalysis(baseline, results)
 		findings = append(findings, behaviorFindings...)
 
@@ -385,7 +385,7 @@ func run(cmd *cobra.Command, args []string) error {
 					Module:     cb.Module,
 					Severity:   "critical",
 					Confidence: "confirmed",
-					Title:      "OOB Callback confirmado — " + cb.Module,
+					Title:      "OOB Callback confirmado - " + cb.Module,
 					Payload:    cb.Payload,
 					Evidence:   fmt.Sprintf("Callback received from %s at %s: %s %s", cb.RemoteIP, cb.Timestamp.Format(time.RFC3339), cb.Method, cb.Path),
 					OWASP:      "A10:2021 SSRF",

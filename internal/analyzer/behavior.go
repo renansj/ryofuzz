@@ -25,7 +25,7 @@ type BehaviorCluster struct {
 
 // BehaviorAnalysis performs anomaly detection on fuzz results.
 // Instead of just pattern matching (nuclei-style), we look for
-// responses that DIFFER from the majority — those are the bugs.
+// responses that DIFFER from the majority - those are the bugs.
 func BehaviorAnalysis(baseline *engine.Response, results []engine.FuzzResult) []*vulns.Finding {
 	var findings []*vulns.Finding
 	if len(results) == 0 {
@@ -51,7 +51,7 @@ func BehaviorAnalysis(baseline *engine.Response, results []engine.FuzzResult) []
 			continue
 		}
 
-		// Anomaly detected — small cluster with different behavior
+		// Anomaly detected - small cluster with different behavior
 		severity := "info"
 		confidence := "low"
 		title := "Behavioral anomaly"
@@ -218,7 +218,7 @@ func TimingAnalysis(baseline *engine.Response, results []engine.FuzzResult) []*v
 				Module:      "behavior",
 				Severity:    "high",
 				Confidence:  "high",
-				Title:       "Timing anomaly — possible blind injection",
+				Title:       "Timing anomaly - possible blind injection",
 				Description: "Response time significantly exceeds statistical baseline",
 				Payload:     r.Payload.Value,
 				Point:       r.Payload.Point,

@@ -37,7 +37,7 @@ func reportText(findings []*vulns.Finding, verbose bool) string {
 
 	var sb strings.Builder
 	sb.WriteString("\n╔══════════════════════════════════════════════════════════════╗\n")
-	sb.WriteString("║                    RESULTS — ryofuzz                        ║\n")
+	sb.WriteString("║                    RESULTS - ryofuzz                        ║\n")
 	sb.WriteString("╚══════════════════════════════════════════════════════════════╝\n\n")
 
 	sevColors := map[string]string{
@@ -91,7 +91,7 @@ func reportJSON(findings []*vulns.Finding) string {
 
 func reportMarkdown(findings []*vulns.Finding) string {
 	var sb strings.Builder
-	sb.WriteString("# ryofuzz — Vulnerability Report\n\n")
+	sb.WriteString("# ryofuzz - Vulnerability Report\n\n")
 	sb.WriteString(fmt.Sprintf("## Summary\n\nTotal: **%d** findings\n\n", len(findings)))
 
 	counts := countBySeverity(findings)

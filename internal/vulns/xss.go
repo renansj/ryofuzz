@@ -38,16 +38,16 @@ func (m *XSSModule) GeneratePayloads(points []input.InjectionPoint, mode string,
 func (m *XSSModule) Detect(payload mutator.Payload, baseBody string, baseStatus int, baseTime int64,
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
 
-	// Reflection detection — payload aparece in response
+	// Reflection detection - payload aparece in response
 	if strings.Contains(respBody, payload.Value) {
 		sev := "high"
 		conf := "high"
-		title := "XSS — Reflected (payload refletido sem sanitização)"
+		title := "XSS - Reflected (payload refletido sem sanitização)"
 		if strings.Contains(payload.Value, "<script") || strings.Contains(payload.Value, "onerror") ||
 			strings.Contains(payload.Value, "onload") || strings.Contains(payload.Value, "javascript:") {
 			sev = "high"
 			conf = "confirmed"
-			title = "XSS — Reflected (tag/event handler refletido)"
+			title = "XSS - Reflected (tag/event handler refletido)"
 		}
 		return &Finding{
 			Module:      "xss",
@@ -71,7 +71,7 @@ func (m *XSSModule) Detect(payload mutator.Payload, baseBody string, baseStatus 
 				Module:      "xss",
 				Severity:    "medium",
 				Confidence:  "medium",
-				Title:       "XSS — Caracteres perigosos refletidos",
+				Title:       "XSS - Caracteres perigosos refletidos",
 				Description: "HTML/JS characters reflected without encoding",
 				Payload:     payload.Value,
 				Point:       payload.Point,

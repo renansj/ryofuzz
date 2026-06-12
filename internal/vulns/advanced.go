@@ -40,12 +40,12 @@ func (m *PrototypePollutionModule) Detect(payload mutator.Payload, baseBody stri
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
 	if strings.Contains(respBody, "polluted") && !strings.Contains(baseBody, "polluted") {
 		return &Finding{Module: "prototype", Severity: "high", Confidence: "high",
-			Title: "Prototype Pollution — Property injected", Payload: payload.Value, Point: payload.Point,
+			Title: "Prototype Pollution - Property injected", Payload: payload.Value, Point: payload.Point,
 			Evidence: "'polluted' found in response", OWASP: "A03:2021 Injection", CWE: "CWE-1321"}
 	}
 	if respStatus == 500 && baseStatus != 500 {
 		return &Finding{Module: "prototype", Severity: "medium", Confidence: "low",
-			Title: "Prototype Pollution — Server error (possible)", Payload: payload.Value, Point: payload.Point,
+			Title: "Prototype Pollution - Server error (possible)", Payload: payload.Value, Point: payload.Point,
 			Evidence: "500 Internal Server Error", OWASP: "A03:2021 Injection", CWE: "CWE-1321"}
 	}
 	return nil
@@ -85,7 +85,7 @@ func (m *JWTModule) Detect(payload mutator.Payload, baseBody string, baseStatus 
 	// Se aceita token sem assinatura (200 ao invés de 401)
 	if respStatus == 200 && (baseStatus == 200 || baseStatus == 302) {
 		return &Finding{Module: "jwt", Severity: "critical", Confidence: "high",
-			Title: "JWT — Algorithm confusion/none accepted", Payload: payload.Value, Point: payload.Point,
+			Title: "JWT - Algorithm confusion/none accepted", Payload: payload.Value, Point: payload.Point,
 			Evidence: fmt.Sprintf("Token com %s aceito (status=%d)", payload.Variant, respStatus),
 			OWASP: "A07:2021 Identification and Authentication Failures", CWE: "CWE-345"}
 	}
@@ -143,7 +143,7 @@ func (m *MassAssignmentModule) Detect(payload mutator.Payload, baseBody string, 
 	if strings.Contains(respBody, `"`+field+`":`+value) || strings.Contains(respBody, `"`+field+`":"`+value+`"`) ||
 		strings.Contains(respBody, field+"="+value) {
 		return &Finding{Module: "mass-assign", Severity: "high", Confidence: "high",
-			Title: "Mass Assignment — Privileged field accepted", Payload: payload.Value, Point: payload.Point,
+			Title: "Mass Assignment - Privileged field accepted", Payload: payload.Value, Point: payload.Point,
 			Evidence: "Field '" + field + "' with value '" + value + "' reflected in response",
 			OWASP: "API3:2023 Broken Object Property Level Authorization", CWE: "CWE-915"}
 	}
@@ -197,7 +197,7 @@ func (m *HTTPSmugglingModule) Detect(payload mutator.Payload, baseBody string, b
 	// Detecção por timeout diferencial
 	if respTime-baseTime > 5000 {
 		return &Finding{Module: "smuggling", Severity: "critical", Confidence: "medium",
-			Title: "HTTP Request Smuggling — Timeout differential", Payload: payload.Value, Point: payload.Point,
+			Title: "HTTP Request Smuggling - Timeout differential", Payload: payload.Value, Point: payload.Point,
 			Evidence: fmt.Sprintf("delta=%dms (possible desync)", respTime-baseTime),
 			OWASP: "A05:2021 Security Misconfiguration", CWE: "CWE-444"}
 	}
@@ -239,13 +239,13 @@ func (m *CORSModule) Detect(payload mutator.Payload, baseBody string, baseStatus
 	}
 	if acao == payload.Value && acac == "true" {
 		return &Finding{Module: "cors", Severity: "high", Confidence: "confirmed",
-			Title: "CORS Misconfiguration — Origin reflected with credentials", Payload: payload.Value, Point: payload.Point,
+			Title: "CORS Misconfiguration - Origin reflected with credentials", Payload: payload.Value, Point: payload.Point,
 			Evidence: fmt.Sprintf("ACAO=%s, ACAC=%s", acao, acac),
 			OWASP: "A05:2021 Security Misconfiguration", CWE: "CWE-942"}
 	}
 	if acao == payload.Value {
 		return &Finding{Module: "cors", Severity: "medium", Confidence: "high",
-			Title: "CORS Misconfiguration — Origin reflected", Payload: payload.Value, Point: payload.Point,
+			Title: "CORS Misconfiguration - Origin reflected", Payload: payload.Value, Point: payload.Point,
 			Evidence: "ACAO=" + acao, OWASP: "A05:2021 Security Misconfiguration", CWE: "CWE-942"}
 	}
 	return nil
@@ -290,7 +290,7 @@ func (m *CSPBypassModule) Detect(payload mutator.Payload, baseBody string, baseS
 	}
 	if len(weaknesses) > 0 {
 		return &Finding{Module: "csp", Severity: "medium", Confidence: "high",
-			Title: "Weak CSP — Bypass possible", Payload: "N/A", Point: payload.Point,
+			Title: "Weak CSP - Bypass possible", Payload: "N/A", Point: payload.Point,
 			Evidence: strings.Join(weaknesses, "; "),
 			OWASP: "A05:2021 Security Misconfiguration", CWE: "CWE-693"}
 	}
@@ -326,13 +326,13 @@ func (m *GraphQLModule) Detect(payload mutator.Payload, baseBody string, baseSta
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
 	if strings.Contains(respBody, "__schema") || strings.Contains(respBody, "__type") {
 		return &Finding{Module: "graphql", Severity: "medium", Confidence: "confirmed",
-			Title: "GraphQL — Introspection enabled", Payload: payload.Value, Point: payload.Point,
+			Title: "GraphQL - Introspection enabled", Payload: payload.Value, Point: payload.Point,
 			Evidence: "Schema exposto via introspection query",
 			OWASP: "API9:2023 Improper Inventory Management", CWE: "CWE-200"}
 	}
 	if strings.Contains(payload.Variant, "batching") && respStatus == 200 && strings.Contains(respBody, "data") {
 		return &Finding{Module: "graphql", Severity: "medium", Confidence: "high",
-			Title: "GraphQL — Batching enabled (rate limit bypass)", Payload: payload.Value, Point: payload.Point,
+			Title: "GraphQL - Batching enabled (rate limit bypass)", Payload: payload.Value, Point: payload.Point,
 			Evidence: "Batch query aceita",
 			OWASP: "API4:2023 Unrestricted Resource Consumption", CWE: "CWE-770"}
 	}
@@ -380,7 +380,7 @@ func (m *DeserializationModule) Detect(payload mutator.Payload, baseBody string,
 	for _, e := range deserErrors {
 		if strings.Contains(bodyLower, e) && !strings.Contains(strings.ToLower(baseBody), e) {
 			return &Finding{Module: "deser", Severity: "high", Confidence: "high",
-				Title: "Insecure Deserialization — Error leak", Payload: payload.Value, Point: payload.Point,
+				Title: "Insecure Deserialization - Error leak", Payload: payload.Value, Point: payload.Point,
 				Evidence: e, OWASP: "A08:2021 Software and Data Integrity Failures", CWE: "CWE-502"}
 		}
 	}
@@ -410,7 +410,7 @@ func (m *LDAPiModule) Detect(payload mutator.Payload, baseBody string, baseStatu
 	for _, e := range ldapErrors {
 		if strings.Contains(strings.ToLower(respBody), e) {
 			return &Finding{Module: "ldapi", Severity: "high", Confidence: "high",
-				Title: "LDAP Injection — Error leak", Payload: payload.Value, Point: payload.Point,
+				Title: "LDAP Injection - Error leak", Payload: payload.Value, Point: payload.Point,
 				Evidence: e, OWASP: "A03:2021 Injection", CWE: "CWE-90"}
 		}
 	}
@@ -440,7 +440,7 @@ func (m *XPathiModule) Detect(payload mutator.Payload, baseBody string, baseStat
 	for _, e := range xpathErrors {
 		if strings.Contains(strings.ToLower(respBody), e) && !strings.Contains(strings.ToLower(baseBody), e) {
 			return &Finding{Module: "xpathi", Severity: "high", Confidence: "high",
-				Title: "XPath Injection — Error", Payload: payload.Value, Point: payload.Point,
+				Title: "XPath Injection - Error", Payload: payload.Value, Point: payload.Point,
 				Evidence: e, OWASP: "A03:2021 Injection", CWE: "CWE-643"}
 		}
 	}
@@ -472,7 +472,7 @@ func (m *BusinessLogicModule) Detect(payload mutator.Payload, baseBody string, b
 	if respStatus == 200 && (strings.Contains(payload.Value, "-") || payload.Value == "0") {
 		if respBody != baseBody && !strings.Contains(strings.ToLower(respBody), "error") && !strings.Contains(strings.ToLower(respBody), "invalid") {
 			return &Finding{Module: "logic", Severity: "medium", Confidence: "medium",
-				Title: "Business Logic — Negative/zero value accepted", Payload: payload.Value, Point: payload.Point,
+				Title: "Business Logic - Negative/zero value accepted", Payload: payload.Value, Point: payload.Point,
 				Evidence: fmt.Sprintf("Valor '%s' aceito sem erro no campo '%s'", payload.Value, payload.Point.Name),
 				OWASP: "A04:2021 Insecure Design", CWE: "CWE-840"}
 		}
@@ -498,7 +498,7 @@ func (m *RateLimitModule) Name() string        { return "ratelimit" }
 func (m *RateLimitModule) Description() string { return "Rate Limit Bypass" }
 
 func (m *RateLimitModule) GeneratePayloads(points []input.InjectionPoint, mode string, mutations int) []mutator.Payload {
-	// Tested via rapid parallel requests — uses engine concurrency
+	// Tested via rapid parallel requests - uses engine concurrency
 	var payloads []mutator.Payload
 	for _, point := range points {
 		payloads = append(payloads, mutator.Payload{Value: point.OriginalValue, Point: point, Module: "ratelimit", Variant: "burst"})
@@ -511,7 +511,7 @@ func (m *RateLimitModule) Detect(payload mutator.Payload, baseBody string, baseS
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
 	if respStatus != 429 && baseStatus != 429 {
 		return &Finding{Module: "ratelimit", Severity: "low", Confidence: "medium",
-			Title: "Rate Limiting — Absent or bypassable", Payload: "Request burst", Point: payload.Point,
+			Title: "Rate Limiting - Absent or bypassable", Payload: "Request burst", Point: payload.Point,
 			Evidence: "No 429 received after request burst",
 			OWASP: "API4:2023 Unrestricted Resource Consumption", CWE: "CWE-770"}
 	}
@@ -570,7 +570,7 @@ func (m *HostHeaderModule) Detect(payload mutator.Payload, baseBody string, base
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
 	if strings.Contains(respBody, payload.Value) && !strings.Contains(baseBody, payload.Value) {
 		return &Finding{Module: "hostheader", Severity: "medium", Confidence: "high",
-			Title: "Host Header Injection — Reflected in response", Payload: payload.Value, Point: payload.Point,
+			Title: "Host Header Injection - Reflected in response", Payload: payload.Value, Point: payload.Point,
 			Evidence: "Injected host appears in body (password reset poisoning?)",
 			OWASP: "A05:2021 Security Misconfiguration", CWE: "CWE-644"}
 	}
@@ -609,7 +609,7 @@ func (m *CachePoisonModule) Detect(payload mutator.Payload, baseBody string, bas
 			cached = vals[0]
 		}
 		return &Finding{Module: "cache", Severity: "high", Confidence: "high",
-			Title: "Web Cache Poisoning — Unkeyed header reflected", Payload: payload.Value, Point: payload.Point,
+			Title: "Web Cache Poisoning - Unkeyed header reflected", Payload: payload.Value, Point: payload.Point,
 			Evidence: fmt.Sprintf("Header '%s' refletido no body. X-Cache: %s", payload.Point.Name, cached),
 			OWASP: "A05:2021 Security Misconfiguration", CWE: "CWE-349"}
 	}
@@ -666,7 +666,7 @@ func (m *PromptInjectionModule) Detect(payload mutator.Payload, baseBody string,
 	for _, ind := range indicators {
 		if strings.Contains(bodyLower, strings.ToLower(ind)) && !strings.Contains(strings.ToLower(baseBody), strings.ToLower(ind)) {
 			return &Finding{Module: "prompt", Severity: "high", Confidence: "high",
-				Title: "Prompt Injection — LLM manipulated", Payload: payload.Value, Point: payload.Point,
+				Title: "Prompt Injection - LLM manipulated", Payload: payload.Value, Point: payload.Point,
 				Evidence: "Indicator '" + ind + "' found in response",
 				OWASP: "LLM01:2025 Prompt Injection", CWE: "CWE-77"}
 		}

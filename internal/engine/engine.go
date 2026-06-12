@@ -38,7 +38,7 @@ type Response struct {
 	ContentType string
 }
 
-// FuzzResult — resultado de um request fuzzado
+// FuzzResult - resultado de um request fuzzado
 type FuzzResult struct {
 	Payload  mutator.Payload
 	Point    input.InjectionPoint

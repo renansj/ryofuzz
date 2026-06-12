@@ -12,18 +12,18 @@ Offensive multi-class web vulnerability fuzzer. Automatically detects injection 
 
 ## Features
 
-- **Auto-detection of injection points** — URL query params, path segments, JSON body (nested), URL-encoded body, headers, cookies
-- **29 vulnerability modules** — OWASP Top 10, API Security Top 10, LLM Top 10, and underground techniques
-- **Radamsa-style mutation engine** — 12 mutation strategies + encoding variants for WAF bypass
-- **Embedded payload database** — 740+ payloads from PayloadsAllTheThings, organized by category
-- **Behavioral differential analysis** — Compares fuzzed responses against baseline (status, body length, timing, reflection, error patterns)
-- **OOB callback server** — Built-in out-of-band listener supporting local, ngrok, and private/CTF networks
-- **Web crawler** — Discovers endpoints via spidering, form parsing, JavaScript analysis, sitemap/robots.txt
-- **Authentication** — Supports basic, bearer, form login, cookie, and custom header auth with auto-refresh
-- **Plugin system** — Extend with custom YAML-based checks
-- **Multiple output formats** — Terminal (colored), JSON, Markdown, HTML (self-contained dark theme with SVG charts)
-- **Proxy support** — Route traffic through Burp Suite or ZAP for inspection
-- **Single binary** — ~10MB, zero runtime dependencies
+- **Auto-detection of injection points** - URL query params, path segments, JSON body (nested), URL-encoded body, headers, cookies
+- **29 vulnerability modules** - OWASP Top 10, API Security Top 10, LLM Top 10, and underground techniques
+- **Radamsa-style mutation engine** - 12 mutation strategies + encoding variants for WAF bypass
+- **Embedded payload database** - 740+ payloads from PayloadsAllTheThings, organized by category
+- **Behavioral differential analysis** - Compares fuzzed responses against baseline (status, body length, timing, reflection, error patterns)
+- **OOB callback server** - Built-in out-of-band listener supporting local, ngrok, and private/CTF networks
+- **Web crawler** - Discovers endpoints via spidering, form parsing, JavaScript analysis, sitemap/robots.txt
+- **Authentication** - Supports basic, bearer, form login, cookie, and custom header auth with auto-refresh
+- **Plugin system** - Extend with custom YAML-based checks
+- **Multiple output formats** - Terminal (colored), JSON, Markdown, HTML (self-contained dark theme with SVG charts)
+- **Proxy support** - Route traffic through Burp Suite or ZAP for inspection
+- **Single binary** - ~10MB, zero runtime dependencies
 
 ## Installation
 
@@ -273,22 +273,22 @@ ryofuzz/
 
 ## How It Works
 
-1. **Parse** — Detects all injection points (query params, JSON fields, form params, path segments, headers, cookies)
-2. **Baseline** — Sends the original request and captures the response as reference
-3. **Generate** — Creates payloads from the embedded database + radamsa-style mutations + encoding variants
-4. **Fuzz** — Sends all payloads concurrently with configurable rate limiting
-5. **Analyze** — Compares each response against baseline (status code, body length, timing, reflection, error patterns)
-6. **Report** — Outputs findings with confidence scoring, evidence, and OWASP/CWE classification
+1. **Parse** - Detects all injection points (query params, JSON fields, form params, path segments, headers, cookies)
+2. **Baseline** - Sends the original request and captures the response as reference
+3. **Generate** - Creates payloads from the embedded database + radamsa-style mutations + encoding variants
+4. **Fuzz** - Sends all payloads concurrently with configurable rate limiting
+5. **Analyze** - Compares each response against baseline (status code, body length, timing, reflection, error patterns)
+6. **Report** - Outputs findings with confidence scoring, evidence, and OWASP/CWE classification
 
 ## Detection Methods
 
-- **Error-based** — SQL errors, template errors, stack traces in response
-- **Time-based** — Response time delta > 4.5s with sleep payloads
-- **Boolean-based** — Body length differential between true/false conditions
-- **Reflection** — Payload (or dangerous characters) appear in response body
-- **Status differential** — Response status differs from baseline
-- **Header analysis** — CORS headers, CSP, injected headers
-- **OOB callbacks** — External interaction confirms blind vulnerabilities
+- **Error-based** - SQL errors, template errors, stack traces in response
+- **Time-based** - Response time delta > 4.5s with sleep payloads
+- **Boolean-based** - Body length differential between true/false conditions
+- **Reflection** - Payload (or dangerous characters) appear in response body
+- **Status differential** - Response status differs from baseline
+- **Header analysis** - CORS headers, CSP, injected headers
+- **OOB callbacks** - External interaction confirms blind vulnerabilities
 
 ## Disclaimer
 
@@ -296,7 +296,7 @@ This tool is intended for **authorized security testing** and **CTF challenges**
 
 ## Author
 
-**RyoSec** — Offensive Security Consulting
+**RyoSec** - Offensive Security Consulting
 
 ## License
 
