@@ -525,13 +525,22 @@ func (f *CoverageGuidedFuzzer) generateSeeds() []struct {
 	}
 
 	for _, point := range f.Points {
-		// Original value
+		// Original value always
 		seeds = append(seeds, struct {
 			Value string
 			Point input.InjectionPoint
 		}{point.OriginalValue, point})
 
-		// Basic interesting seeds per type
+		// Type-aware seeds based on the original value
+		typeSeeds := seedsForValue(point.OriginalValue)
+		for _, s := range typeSeeds {
+			seeds = append(seeds, struct {
+				Value string
+				Point input.InjectionPoint
+			}{s, point})
+		}
+
+		// Generic seeds always
 		for _, s := range initialSeeds {
 			seeds = append(seeds, struct {
 				Value string
@@ -540,6 +549,44 @@ func (f *CoverageGuidedFuzzer) generateSeeds() []struct {
 		}
 	}
 	return seeds
+}
+
+func seedsForValue(val string) []string {
+	// URL parameter - needs URL-shaped seeds to hit different code paths
+	if strings.HasPrefix(val, "http://") || strings.HasPrefix(val, "https://") || strings.Contains(val, "://") {
+		return []string{
+			// Internal network
+			"http://127.0.0.1/", "http://localhost/", "http://0.0.0.0/",
+			"http://[::1]/", "http://0/", "http://127.1/",
+			// Cloud metadata
+			"http://169.254.169.254/latest/meta-data/",
+			"http://0xA9FEA9FE/latest/meta-data/",
+			"http://2852039166/latest/meta-data/",
+			"http://0251.0376.0251.0376/latest/meta-data/",
+			"http://[::ffff:169.254.169.254]/",
+			// Internal services
+			"http://127.0.0.1:6379/", "http://127.0.0.1:3000/",
+			"http://127.0.0.1:8080/", "http://127.0.0.1:9200/",
+			// Protocol smuggling
+			"file:///etc/passwd", "gopher://127.0.0.1:6379/",
+			"dict://127.0.0.1:6379/INFO",
+			// Bypass patterns
+			"http://evil.com@127.0.0.1/", "http://127.0.0.1#@evil.com",
+			// Malformed
+			"http://", "://", "//127.0.0.1/",
+			// Very long URL
+			"http://" + strings.Repeat("a", 5000) + ".com",
+		}
+	}
+	// Numeric
+	if _, err := fmt.Sscanf(val, "%d", new(int)); err == nil {
+		return []string{"0", "-1", "1", "99999999", "2147483647", "-2147483648", "NaN"}
+	}
+	// Email-like
+	if strings.Contains(val, "@") {
+		return []string{"test@evil.com", "a]@evil.com", `"@evil.com`, "test@127.0.0.1"}
+	}
+	return nil
 }
 
 // calcEnergy determines how many mutations to generate from this entry.
