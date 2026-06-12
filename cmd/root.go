@@ -12,6 +12,7 @@ import (
 	"github.com/renansj/ryofuzz/internal/fuzzer"
 	"github.com/renansj/ryofuzz/internal/input"
 	"github.com/renansj/ryofuzz/internal/mutator"
+	"github.com/renansj/ryofuzz/internal/nuclei"
 	"github.com/renansj/ryofuzz/internal/oob"
 	"github.com/renansj/ryofuzz/internal/plugins"
 	"github.com/renansj/ryofuzz/internal/reporter"
@@ -66,6 +67,11 @@ var (
 
 	// Plugins
 	pluginsDir string
+
+	// Nuclei templates
+	nucleiDir      string
+	nucleiTags     string
+	nucleiSeverity string
 )
 
 var rootCmd = &cobra.Command{
@@ -132,6 +138,11 @@ func init() {
 
 	// Plugins
 	rootCmd.Flags().StringVar(&pluginsDir, "plugins-dir", "", "Custom plugins directory")
+
+	// Nuclei
+	rootCmd.Flags().StringVar(&nucleiDir, "nuclei-templates", "", "Path to nuclei-templates directory")
+	rootCmd.Flags().StringVar(&nucleiTags, "nuclei-tags", "", "Filter nuclei templates by tags (comma-separated)")
+	rootCmd.Flags().StringVar(&nucleiSeverity, "nuclei-severity", "critical,high", "Filter nuclei templates by severity")
 
 	rootCmd.MarkFlagRequired("url")
 }
@@ -464,6 +475,32 @@ func run(cmd *cobra.Command, args []string) error {
 		allFindings = append(allFindings, findings...)
 	}
 	} // end else (standard mode)
+
+	// --- Nuclei templates ---
+	if nucleiDir != "" {
+		fmt.Printf("[*] Loading nuclei templates from %s...\n", nucleiDir)
+		templates, err := nuclei.LoadTemplates(nucleiDir, nucleiTags, nucleiSeverity)
+		if err != nil {
+			fmt.Printf("[-] Failed to load nuclei templates: %v\n", err)
+		} else if len(templates) > 0 {
+			fmt.Printf("[*] Running %d nuclei templates...\n", len(templates))
+			for _, t := range templates {
+				result := nuclei.Execute(t, targetURL, timeout, proxy)
+				if result.Matched {
+					allFindings = append(allFindings, &vulns.Finding{
+						Module:     "nuclei",
+						Severity:   result.Severity,
+						Confidence: "confirmed",
+						Title:      fmt.Sprintf("[%s] %s", result.TemplateID, result.Name),
+						Payload:    result.URL,
+						Evidence:   result.MatchedAt,
+						OWASP:      "A06:2021 Vulnerable and Outdated Components",
+						CWE:        "CWE-1035",
+					})
+				}
+			}
+		}
+	}
 
 	// --- OOB callbacks ---
 	if oobManager != nil {

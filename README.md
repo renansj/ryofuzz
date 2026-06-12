@@ -264,6 +264,50 @@ Load custom plugins:
 ryofuzz -u "http://target" --plugins-dir ./my-plugins -t all
 ```
 
+## Nuclei Template Compatibility
+
+ryofuzz can run [nuclei-templates](https://github.com/projectdiscovery/nuclei-templates) natively. This gives you access to 10,000+ community templates for known CVEs, misconfigurations, and exposures.
+
+### Setup
+
+```bash
+# Clone nuclei-templates
+git clone --depth 1 https://github.com/projectdiscovery/nuclei-templates.git ~/nuclei-templates
+```
+
+### Usage
+
+```bash
+# Run all critical/high CVE templates
+ryofuzz -u "http://target" -t all --nuclei-templates ~/nuclei-templates/http/cves/
+
+# Filter by tags
+ryofuzz -u "http://target" -t all --nuclei-templates ~/nuclei-templates/http/ --nuclei-tags rce,sqli
+
+# Misconfigurations only
+ryofuzz -u "http://target" -t all --nuclei-templates ~/nuclei-templates/http/misconfiguration/
+
+# Combined: nuclei templates + ryofuzz fuzzing
+ryofuzz -u "http://target/api?id=1" -t all --nuclei-templates ~/nuclei-templates/http/cves/ --mode smart
+```
+
+### Why use nuclei templates through ryofuzz?
+
+- **Single tool** - no need to install nuclei separately
+- **Combined results** - nuclei findings + fuzzing findings in one report
+- **Fuzz around CVEs** - ryofuzz tests the endpoint for unknown bugs while nuclei checks for known ones
+
+### Supported template features
+
+- HTTP requests (GET, POST, PUT, etc.)
+- Word matchers (body, header)
+- Regex matchers
+- Status code matchers
+- Matchers condition (AND/OR)
+- Negative matchers
+- Multiple paths per template
+- {{BaseURL}} / {{RootURL}} variables
+
 ## Architecture
 
 ```
@@ -273,19 +317,17 @@ ryofuzz/
 ├── internal/
 │   ├── input/parser.go          # Auto-detection of injection points
 │   ├── engine/engine.go         # Concurrent request engine
-│   ├── mutator/mutator.go       # Radamsa-style mutation engine
+│   ├── fuzzer/guided.go         # Coverage-guided evolutionary fuzzer (AFL++ style)
+│   ├── mutator/                 # Radamsa-style mutations + smart type-aware generation
 │   ├── payloads/database.go     # Embedded payload database (740+)
 │   ├── vulns/                   # 29 vulnerability modules
-│   │   ├── module.go            # Interface + selector
-│   │   ├── sqli.go, xss.go, ssti.go, ssrf.go, cmdi.go
-│   │   ├── web_classic.go       # LFI, NoSQLi, XXE, IDOR, Redirect, CRLF
-│   │   └── advanced.go          # Prototype Pollution, JWT, Smuggling, CORS, etc.
-│   ├── analyzer/analyzer.go     # Baseline comparison + finding generation
+│   ├── analyzer/                # Behavioral analysis + FP filter
+│   ├── nuclei/runner.go         # Nuclei template parser and executor
 │   ├── reporter/                # Output: text, json, markdown, html
-│   ├── oob/server.go            # OOB callback server (local/ngrok/private)
-│   ├── auth/auth.go             # Authentication management
-│   ├── crawler/crawler.go       # Web crawler + JS parser
-│   └── plugins/loader.go        # YAML plugin system
+│   ├── oob/                     # OOB callback server (local/ngrok/private)
+│   ├── auth/                    # Authentication management
+│   ├── crawler/                 # Web crawler + JS parser
+│   └── plugins/                 # YAML plugin system
 └── plugins/                     # Example plugins
 ```
 
