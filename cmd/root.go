@@ -434,8 +434,8 @@ func run(cmd *cobra.Command, args []string) error {
 
 		// Timing analysis (statistical outlier detection)
 		timingFindings := analyzer.TimingAnalysis(baseline, results)
-		if len(timingFindings) > 3 {
-			timingFindings = timingFindings[:3]
+		if len(timingFindings) > 2 {
+			timingFindings = timingFindings[:2]
 		}
 		findings = append(findings, timingFindings...)
 

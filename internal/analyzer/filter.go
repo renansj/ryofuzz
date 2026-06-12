@@ -131,29 +131,70 @@ func isFalsePositive(baseline *engine.Response, f *vulns.Finding, results []engi
 		}
 	}
 
-	// Rule 8: CVE probe 500s on JSON error responses are just invalid URL errors
-	if f.Module == "cve" && resp.StatusCode == 500 && isJSON {
+	// Rule 8: CVE probe errors - invalid URL parse errors are not real vulns
+	if f.Module == "cve" && resp.StatusCode >= 400 && isJSON {
 		bodyLower := strings.ToLower(resp.Body)
-		// Flask/Python URL parse errors are not real vulns
 		if strings.Contains(bodyLower, "urlopen error") || strings.Contains(bodyLower, "invalid url") ||
 			strings.Contains(bodyLower, "no host supplied") || strings.Contains(bodyLower, "unknown url type") ||
-			strings.Contains(bodyLower, "name or service not known") {
+			strings.Contains(bodyLower, "name or service not known") || strings.Contains(bodyLower, "no connection adapters") ||
+			strings.Contains(bodyLower, "no scheme supplied") {
 			return true
 		}
 	}
 
-	// Rule 9: GraphQL - response must actually be a GraphQL response, not URL echo
+	// Rule 9: GraphQL - response must be a real GraphQL response
 	if f.Module == "graphql" && isJSON {
 		if !strings.Contains(resp.Body, `"data"`) {
 			return true
 		}
 	}
 
-	// Rule 10: Prototype pollution "500 Internal Server Error" on JSON URL echo
-	if f.Module == "prototype" && f.Confidence == "low" && isJSON {
+	// Rule 10: Prototype pollution in JSON error/URL echo
+	if f.Module == "prototype" && isJSON {
 		if strings.Contains(resp.Body, `"error"`) || strings.Contains(resp.Body, `"url"`) {
 			return true
 		}
+	}
+
+	// Rule 11: XXE - payload echoed in error (not real entity processing)
+	if f.Module == "xxe" && isJSON {
+		if strings.Contains(resp.Body, `"error"`) {
+			return true
+		}
+		if strings.Contains(resp.Body, `"url"`) && len(f.Payload) > 10 {
+			marker := f.Payload
+			if len(marker) > 30 {
+				marker = marker[:30]
+			}
+			if strings.Contains(resp.Body, marker) {
+				return true
+			}
+		}
+	}
+
+	// Rule 12: Mass assignment - field must appear as a real key in success response
+	if f.Module == "mass-assign" && isJSON {
+		if resp.StatusCode != 200 {
+			return true
+		}
+		if strings.Contains(resp.Body, `"error"`) || strings.Contains(resp.Body, `"message"`) {
+			return true
+		}
+	}
+
+	// Rule 13: Behavioral input reflection in JSON = just echo
+	if f.Module == "behavior" && strings.Contains(f.Title, "reflection") && isJSON {
+		return true
+	}
+
+	// Rule 14: Behavioral response divergence with 400 = invalid input, not a vuln
+	if f.Module == "behavior" && strings.Contains(f.Title, "divergence") && resp.StatusCode == 400 {
+		return true
+	}
+
+	// Rule 15: 414 URI Too Long is not a timing anomaly
+	if f.Module == "behavior" && resp.StatusCode == 414 {
+		return true
 	}
 
 	return false

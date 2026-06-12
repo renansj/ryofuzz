@@ -50,7 +50,7 @@ func BehaviorAnalysis(baseline *engine.Response, results []engine.FuzzResult) []
 	}
 	suppress500 := float64(total500) > float64(totalResults)*0.2
 
-	maxFindings := 5 // cap behavioral findings to reduce noise
+	maxFindings := 3 // cap behavioral findings to reduce noise
 	for _, cluster := range clusters {
 		if len(findings) >= maxFindings {
 			break
