@@ -9,6 +9,7 @@ import (
 	"github.com/renansj/ryofuzz/internal/auth"
 	"github.com/renansj/ryofuzz/internal/crawler"
 	"github.com/renansj/ryofuzz/internal/engine"
+	"github.com/renansj/ryofuzz/internal/fuzzer"
 	"github.com/renansj/ryofuzz/internal/input"
 	"github.com/renansj/ryofuzz/internal/mutator"
 	"github.com/renansj/ryofuzz/internal/oob"
@@ -98,7 +99,7 @@ func init() {
 	rootCmd.Flags().StringVar(&proxy, "proxy", "", "Proxy (ex: http://127.0.0.1:8080)")
 	rootCmd.Flags().IntVar(&timeout, "timeout", 15, "Timeout per request (seconds)")
 	rootCmd.Flags().IntVar(&delay, "delay", 0, "Delay between requests (ms)")
-	rootCmd.Flags().StringVar(&mode, "mode", "smart", "Modo: smart (payloads+mutations), payloads, mutate")
+	rootCmd.Flags().StringVar(&mode, "mode", "smart", "Mode: smart, payloads, mutate, guided (AFL++ style)")
 	rootCmd.Flags().IntVarP(&mutations, "mutations", "n", 0, "Number of radamsa-style mutations (0=auto)")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	rootCmd.Flags().BoolVar(&followRedir, "follow", false, "Follow redirects")
@@ -240,6 +241,79 @@ func run(cmd *cobra.Command, args []string) error {
 	var allFindings []*vulns.Finding
 	totalRequests := 0
 
+	// --- Coverage-guided mode (AFL++ for web) ---
+	if mode == "guided" {
+		fmt.Println("[*] Coverage-guided fuzzing mode (AFL++ style)")
+		points, err := input.Parse(targetURL, method, body, headers, cookies)
+		if err != nil {
+			return fmt.Errorf("failed to parse injection points: %w", err)
+		}
+		fmt.Printf("[*] Injection points: %d\n", len(points))
+		for _, p := range points {
+			fmt.Printf("    - %s [%s] = %q\n", p.Name, p.Location, p.OriginalValue)
+		}
+
+		maxExecs := int64(10000)
+		if mutations > 0 {
+			maxExecs = int64(mutations)
+		}
+		maxTime := 60 * time.Second
+		if timeout > 0 {
+			maxTime = time.Duration(timeout*4) * time.Second
+		}
+
+		fzr := fuzzer.New(fuzzer.Config{
+			Target:      targetURL,
+			Method:      method,
+			Body:        body,
+			Headers:     headers,
+			Cookies:     cookies,
+			Proxy:       proxy,
+			Timeout:     timeout,
+			Points:      points,
+			Concurrency: concurrency,
+		})
+
+		fmt.Printf("[*] Starting guided fuzzer (max_execs=%d, max_time=%s)\n", maxExecs, maxTime)
+		corpus := fzr.Fuzz(maxExecs, maxTime)
+		stats := fzr.GetStats()
+		fmt.Printf("[+] Done: %d execs, %d coverage, %d corpus, %d crashes, %.0f execs/s\n",
+			stats.TotalExecs, stats.TotalCoverage, stats.CorpusSize, stats.CrashCount, stats.ExecsPerSec)
+
+		for _, entry := range corpus {
+			if entry.Response.StatusCode == 500 || entry.Response.Interesting || entry.Response.ErrorClass != "" {
+				sev := "medium"
+				title := "Behavioral divergence at depth " + fmt.Sprintf("%d", entry.Depth)
+				if entry.Response.StatusCode == 500 {
+					sev = "high"
+					title = "Server crash/error"
+				}
+				if entry.Response.TimingMs > 5000 {
+					sev = "high"
+					title = "Timing anomaly (possible blind injection)"
+				}
+				if entry.Response.ErrorClass == "sql_error" {
+					sev = "critical"
+					title = "SQL error triggered"
+				}
+				allFindings = append(allFindings, &vulns.Finding{
+					Module:     "guided-fuzz",
+					Severity:   sev,
+					Confidence: "high",
+					Title:      title,
+					Payload:    entry.Value,
+					Point:      entry.Point,
+					Evidence:   fmt.Sprintf("status=%d, size=%d, time=%dms, error_class=%s, depth=%d",
+						entry.Response.StatusCode, entry.Response.BodyLength, entry.Response.TimingMs, entry.Response.ErrorClass, entry.Depth),
+					OWASP: "A03:2021 Injection",
+					CWE:   "CWE-20",
+				})
+			}
+		}
+		totalRequests = int(stats.TotalExecs)
+	} else {
+	// --- Standard mode ---
+
 	for _, target := range targets {
 		if verbose && len(targets) > 1 {
 			fmt.Printf("\n[*] Fuzzing: %s\n", target)
@@ -372,8 +446,9 @@ func run(cmd *cobra.Command, args []string) error {
 
 		allFindings = append(allFindings, findings...)
 	}
+	} // end else (standard mode)
 
-	// --- Verificar OOB callbacks ---
+	// --- OOB callbacks ---
 	if oobManager != nil {
 		fmt.Println("[*] Waiting for OOB callbacks (3s)...")
 		time.Sleep(3 * time.Second)
