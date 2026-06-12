@@ -434,6 +434,9 @@ func run(cmd *cobra.Command, args []string) error {
 
 		// Timing analysis (statistical outlier detection)
 		timingFindings := analyzer.TimingAnalysis(baseline, results)
+		if len(timingFindings) > 3 {
+			timingFindings = timingFindings[:3]
+		}
 		findings = append(findings, timingFindings...)
 
 		// Differential analysis (boolean oracle detection)
@@ -443,6 +446,9 @@ func run(cmd *cobra.Command, args []string) error {
 		// Reflection scan
 		reflectionFindings := analyzer.ReflectionScan(results, baseline.Body)
 		findings = append(findings, reflectionFindings...)
+
+		// Filter false positives (echoed payloads in error responses)
+		findings = analyzer.FilterFalsePositives(baseline, findings, results)
 
 		allFindings = append(allFindings, findings...)
 	}

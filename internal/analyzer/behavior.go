@@ -40,14 +40,27 @@ func BehaviorAnalysis(baseline *engine.Response, results []engine.FuzzResult) []
 		return clusters[i].Count < clusters[j].Count
 	})
 
+	// Count how many results are 500 - if too many, it's just bad error handling
+	total500 := 0
 	totalResults := len(results)
+	for _, c := range clusters {
+		if c.StatusCode == 500 {
+			total500 += c.Count
+		}
+	}
+	suppress500 := float64(total500) > float64(totalResults)*0.2
+
+	maxFindings := 5 // cap behavioral findings to reduce noise
 	for _, cluster := range clusters {
+		if len(findings) >= maxFindings {
+			break
+		}
 		// Skip the baseline cluster (normal behavior)
 		if cluster.Fingerprint == baseFingerprint {
 			continue
 		}
 		// Skip large clusters (common behavior, not interesting)
-		if float64(cluster.Count) > float64(totalResults)*0.1 {
+		if float64(cluster.Count) > float64(totalResults)*0.02 {
 			continue
 		}
 
@@ -73,6 +86,9 @@ func BehaviorAnalysis(baseline *engine.Response, results []engine.FuzzResult) []
 		}
 
 		if cluster.StatusCode == 500 {
+			if suppress500 {
+				continue // Too many 500s - just bad error handling, not interesting
+			}
 			severity = "high"
 			confidence = "high"
 			title = "Server crash / unhandled exception"
