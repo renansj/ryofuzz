@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Verify dependencies
+        run: go mod verify
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build -o /dev/null .
+      - name: Test
+        run: go test ./... -race -timeout 30s
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Determine version bump
+        id: version
+        run: |
+          # Get latest tag
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+          # Parse current version
+          VERSION="${LATEST_TAG#v}"
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          PATCH=$(echo "$VERSION" | cut -d. -f3)
+
+          # Analyze commits since last tag
+          COMMITS=$(git log "$LATEST_TAG"..HEAD --pretty=format:"%s" 2>/dev/null || git log --pretty=format:"%s")
+
+          BUMP="patch"
+          if echo "$COMMITS" | grep -qiE "^(BREAKING|breaking|!:)"; then
+            BUMP="major"
+          elif echo "$COMMITS" | grep -qiE "^feat"; then
+            BUMP="minor"
+          fi
+
+          # Calculate new version
+          case $BUMP in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "bump=$BUMP" >> $GITHUB_OUTPUT
+          echo "Version: $LATEST_TAG -> $NEW_VERSION ($BUMP)"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          LATEST_TAG=${{ steps.version.outputs.latest_tag }}
+          {
+            echo "changelog<<EOF"
+            echo "## Changes"
+            echo ""
+            # Group by type
+            FEATS=$(git log "$LATEST_TAG"..HEAD --pretty=format:"- %s" --grep="^feat" 2>/dev/null)
+            FIXES=$(git log "$LATEST_TAG"..HEAD --pretty=format:"- %s" --grep="^fix" 2>/dev/null)
+            OTHER=$(git log "$LATEST_TAG"..HEAD --pretty=format:"- %s" --invert-grep --grep="^feat" --grep="^fix" 2>/dev/null)
+
+            if [ -n "$FEATS" ]; then
+              echo "### Features"
+              echo "$FEATS"
+              echo ""
+            fi
+            if [ -n "$FIXES" ]; then
+              echo "### Bug Fixes"
+              echo "$FIXES"
+              echo ""
+            fi
+            if [ -n "$OTHER" ]; then
+              echo "### Other"
+              echo "$OTHER"
+              echo ""
+            fi
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Build binaries
+        run: |
+          VERSION=${{ steps.version.outputs.new_version }}
+          LDFLAGS="-s -w -X main.version=$VERSION -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          mkdir -p dist
+
+          # Linux amd64
+          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/ryofuzz-linux-amd64 .
+          # Linux arm64
+          GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/ryofuzz-linux-arm64 .
+          # macOS amd64
+          GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/ryofuzz-darwin-amd64 .
+          # macOS arm64 (Apple Silicon)
+          GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/ryofuzz-darwin-arm64 .
+          # Windows amd64
+          GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/ryofuzz-windows-amd64.exe .
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.new_version }}
+          name: ${{ steps.version.outputs.new_version }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          files: |
+            dist/ryofuzz-linux-amd64
+            dist/ryofuzz-linux-arm64
+            dist/ryofuzz-darwin-amd64
+            dist/ryofuzz-darwin-arm64
+            dist/ryofuzz-windows-amd64.exe
+            dist/checksums.txt
+          draft: false
+          prerelease: false
