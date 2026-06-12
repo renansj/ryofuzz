@@ -27,6 +27,24 @@ Offensive multi-class web vulnerability fuzzer. Automatically detects injection 
 
 ## Installation
 
+### go install
+
+```bash
+go install github.com/renansj/ryofuzz@latest
+```
+
+### Download binary
+
+```bash
+# Linux amd64
+curl -Lo ryofuzz https://github.com/renansj/ryofuzz/releases/latest/download/ryofuzz-linux-amd64
+chmod +x ryofuzz && sudo mv ryofuzz /usr/local/bin/
+
+# macOS Apple Silicon
+curl -Lo ryofuzz https://github.com/renansj/ryofuzz/releases/latest/download/ryofuzz-darwin-arm64
+chmod +x ryofuzz && sudo mv ryofuzz /usr/local/bin/
+```
+
 ### From source
 
 ```bash
@@ -38,7 +56,7 @@ sudo mv ryofuzz /usr/local/bin/
 
 ### Requirements
 
-- Go 1.21+
+- Go 1.22+ (for go install / from source)
 
 ## Quick Start
 
