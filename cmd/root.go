@@ -340,7 +340,7 @@ func run(cmd *cobra.Command, args []string) error {
 					Confidence: "confirmed",
 					Title:      "OOB Callback confirmado — " + cb.Module,
 					Payload:    cb.Payload,
-					Evidence:   fmt.Sprintf("Callback recebido de %s em %s: %s %s", cb.RemoteIP, cb.Timestamp.Format(time.RFC3339), cb.Method, cb.Path),
+					Evidence:   fmt.Sprintf("Callback received from %s at %s: %s %s", cb.RemoteIP, cb.Timestamp.Format(time.RFC3339), cb.Method, cb.Path),
 					OWASP:      "A10:2021 SSRF",
 					CWE:        "CWE-918",
 				})
@@ -350,7 +350,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// --- Report ---
 	duration := time.Since(startTime)
-	fmt.Printf("\n[+] Findings: %d (em %s, %d requests)\n", len(allFindings), duration.Round(time.Second), totalRequests)
+	fmt.Printf("\n[+] Findings: %d (in %s, %d requests)\n", len(allFindings), duration.Round(time.Second), totalRequests)
 
 	switch format {
 	case "html":
