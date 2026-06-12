@@ -7,6 +7,7 @@ import (
 
 	"github.com/renansj/ryofuzz/internal/analyzer"
 	"github.com/renansj/ryofuzz/internal/auth"
+	"github.com/renansj/ryofuzz/internal/behavioral"
 	"github.com/renansj/ryofuzz/internal/crawler"
 	"github.com/renansj/ryofuzz/internal/engine"
 	"github.com/renansj/ryofuzz/internal/fuzzer"
@@ -105,7 +106,7 @@ func init() {
 	rootCmd.Flags().StringVar(&proxy, "proxy", "", "Proxy (ex: http://127.0.0.1:8080)")
 	rootCmd.Flags().IntVar(&timeout, "timeout", 15, "Timeout per request (seconds)")
 	rootCmd.Flags().IntVar(&delay, "delay", 0, "Delay between requests (ms)")
-	rootCmd.Flags().StringVar(&mode, "mode", "smart", "Mode: smart, payloads, mutate, guided (AFL++ style)")
+	rootCmd.Flags().StringVar(&mode, "mode", "smart", "Mode: smart, payloads, mutate, guided, behavioral")
 	rootCmd.Flags().IntVarP(&mutations, "mutations", "n", 0, "Number of radamsa-style mutations (0=auto)")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	rootCmd.Flags().BoolVar(&followRedir, "follow", false, "Follow redirects")
@@ -251,6 +252,56 @@ func run(cmd *cobra.Command, args []string) error {
 
 	var allFindings []*vulns.Finding
 	totalRequests := 0
+
+	// --- Behavioral mode (intent mapping) ---
+	if mode == "behavioral" {
+		fmt.Println("[*] Behavioral intent mapping mode")
+		points, err := input.Parse(targetURL, method, body, headers, cookies)
+		if err != nil {
+			return fmt.Errorf("failed to parse injection points: %w", err)
+		}
+		fmt.Printf("[*] Injection points: %d\n", len(points))
+
+		for _, point := range points {
+			fmt.Printf("\n[*] Analyzing: %s [%s] = %q\n", point.Name, point.Location, point.OriginalValue)
+
+			eng := behavioral.New(behavioral.Config{
+				Target:  targetURL,
+				Method:  method,
+				Body:    body,
+				Headers: headers,
+				Cookies: cookies,
+				Param:   point.Name,
+				Value:   point.OriginalValue,
+				Timeout: timeout,
+			})
+
+			model, findings := eng.Run()
+			behavioral.PrintModel(model)
+			behavioral.PrintFindings(findings)
+
+			// Convert to vulns.Finding for unified reporting
+			for _, f := range findings {
+				if f.Severity == "info" {
+					continue
+				}
+				allFindings = append(allFindings, &vulns.Finding{
+					Module:      "behavioral",
+					Severity:    f.Severity,
+					Confidence:  f.Confidence,
+					Title:       f.Title,
+					Description: f.Description,
+					Point:       point,
+					Evidence:    f.Implication,
+					OWASP:       "A03:2021 Injection",
+					CWE:         "CWE-20",
+				})
+			}
+		}
+
+		totalRequests = 200 // approximate
+		goto doReport
+	}
 
 	// --- Coverage-guided mode (AFL++ for web) ---
 	if mode == "guided" {
@@ -524,6 +575,7 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+doReport:
 	// --- Report ---
 	duration := time.Since(startTime)
 	fmt.Printf("\n[+] Findings: %d (in %s, %d requests)\n", len(allFindings), duration.Round(time.Second), totalRequests)
