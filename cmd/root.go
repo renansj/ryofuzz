@@ -275,6 +275,14 @@ func run(cmd *cobra.Command, args []string) error {
 		})
 
 		fmt.Printf("[*] Starting guided fuzzer (max_execs=%d, max_time=%s)\n", maxExecs, maxTime)
+
+		// Verify target is reachable
+		testResp := fzr.TestConnection()
+		if testResp.StatusCode == -1 {
+			return fmt.Errorf("target unreachable: %s (is the server running?)", testResp.ErrorClass)
+		}
+		fmt.Printf("[*] Target is up: %d (%dms)\n", testResp.StatusCode, testResp.TimingMs)
+
 		corpus := fzr.Fuzz(maxExecs, maxTime)
 		stats := fzr.GetStats()
 		fmt.Printf("[+] Done: %d execs, %d coverage, %d corpus, %d crashes, %.0f execs/s\n",
@@ -369,6 +377,9 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 		baseline, err := engine.CaptureBaseline(cfg)
 		if err != nil {
+			if target == targetURL {
+				return fmt.Errorf("target unreachable: %v (is the server running?)", err)
+			}
 			if verbose {
 				fmt.Printf("[-] Baseline failed for %s: %v\n", target, err)
 			}

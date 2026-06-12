@@ -111,6 +111,14 @@ func New(cfg Config) *CoverageGuidedFuzzer {
 	}
 }
 
+// TestConnection verifies the target is reachable before fuzzing.
+func (f *CoverageGuidedFuzzer) TestConnection() ResponseInfo {
+	if len(f.Points) == 0 {
+		return ResponseInfo{StatusCode: -1, ErrorClass: "no injection points"}
+	}
+	return f.execute(f.Points[0].OriginalValue, f.Points[0])
+}
+
 // Fuzz runs the coverage-guided evolutionary fuzzing loop.
 // This is the core loop equivalent to AFL's fuzz_one().
 func (f *CoverageGuidedFuzzer) Fuzz(maxExecs int64, maxTime time.Duration) []CorpusEntry {
