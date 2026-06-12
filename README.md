@@ -1,246 +1,237 @@
 # ryofuzz
 
-Offensive multi-class web vulnerability fuzzer. Automatically detects injection points, tests for 29+ vulnerability classes, and performs behavioral differential analysis to identify security issues.
+Offensive web vulnerability fuzzer. Discovers unknown bugs through behavioral analysis, coverage-guided mutation, and intent mapping.
 
 ```
   ╔═══════════════════════════════════════════╗
-  ║             ryofuzz v0.1.0                ║
+  ║             ryofuzz v0.4.0                ║
   ║    Offensive Web Vulnerability Fuzzer     ║
   ║    github.com/renansj/ryofuzz             ║
   ╚═══════════════════════════════════════════╝
 ```
 
-## Features
+## What makes it different
 
-- **Auto-detection of injection points** - URL query params, path segments, JSON body (nested), URL-encoded body, headers, cookies
-- **29 vulnerability modules** - OWASP Top 10, API Security Top 10, LLM Top 10, and underground techniques
-- **Radamsa-style mutation engine** - 12 mutation strategies + encoding variants for WAF bypass
-- **Embedded payload database** - 740+ payloads from PayloadsAllTheThings, organized by category
-- **Behavioral differential analysis** - Compares fuzzed responses against baseline (status, body length, timing, reflection, error patterns)
-- **OOB callback server** - Built-in out-of-band listener supporting local, ngrok, and private/CTF networks
-- **Web crawler** - Discovers endpoints via spidering, form parsing, JavaScript analysis, sitemap/robots.txt
-- **Authentication** - Supports basic, bearer, form login, cookie, and custom header auth with auto-refresh
-- **Plugin system** - Extend with custom YAML-based checks
-- **Multiple output formats** - Terminal (colored), JSON, Markdown, HTML (self-contained dark theme with SVG charts)
-- **Proxy support** - Route traffic through Burp Suite or ZAP for inspection
-- **Single binary** - ~10MB, zero runtime dependencies
+Most scanners check for known vulnerabilities. ryofuzz discovers unknown ones.
+
+- **Behavioral mode**: maps how the server processes input, then attacks the logic gaps
+- **Guided mode**: AFL++-style coverage-guided evolutionary fuzzing for web
+- **Smart mode**: type-aware payload generation with false positive filtering
+- **Nuclei compatible**: runs 10,000+ community templates natively
 
 ## Installation
 
-### go install
-
 ```bash
+# go install
 go install github.com/renansj/ryofuzz@latest
-```
 
-### Download binary
-
-```bash
-# Linux amd64
+# Binary download (Linux)
 curl -Lo ryofuzz https://github.com/renansj/ryofuzz/releases/latest/download/ryofuzz-linux-amd64
 chmod +x ryofuzz && sudo mv ryofuzz /usr/local/bin/
 
 # macOS Apple Silicon
 curl -Lo ryofuzz https://github.com/renansj/ryofuzz/releases/latest/download/ryofuzz-darwin-arm64
 chmod +x ryofuzz && sudo mv ryofuzz /usr/local/bin/
+
+# From source
+git clone https://github.com/renansj/ryofuzz.git && cd ryofuzz
+go build -ldflags="-s -w" -o ryofuzz . && sudo mv ryofuzz /usr/local/bin/
 ```
 
-### From source
+Requires Go 1.22+.
+
+## Modes
+
+### Behavioral (intent mapping)
+
+Maps server behavior first, then attacks based on what it learns. Sends ~120 structured probes to understand:
+- What type of input the server expects (URL, path, ID, text, JSON)
+- What the server does with it (fetch, reflect, execute, query database)
+- Where validation boundaries are (which characters change behavior)
+- Then targets the specific vulnerability class that matches
 
 ```bash
-git clone https://github.com/renansj/ryofuzz.git
-cd ryofuzz
-go build -ldflags="-s -w" -o ryofuzz .
-sudo mv ryofuzz /usr/local/bin/
+ryofuzz -u "http://target/api?url=http://example.com" --mode behavioral
+ryofuzz -u "http://target/search?q=test" --mode behavioral
 ```
 
-### Requirements
+### Guided (AFL++ for web)
 
-- Go 1.22+ (for go install / from source)
-
-## Quick Start
+Coverage-guided evolutionary fuzzing. Keeps inputs that trigger new server behaviors, mutates those further. Gets smarter over time.
 
 ```bash
-# Fuzz all vulnerability classes
-ryofuzz -u "http://target/api?id=1&name=test" -t all
-
-# JSON body
-ryofuzz -u "http://target/api" -d '{"user":"admin","role":"viewer","id":1}' -t sqli,ssti,nosqli
-
-# URL-encoded body
-ryofuzz -u "http://target/login" -X POST -d "username=admin&password=test" -t sqli,xss
-
-# Specific modules only
-ryofuzz -u "http://target/search?q=test" -t xss,ssti,cmdi
+ryofuzz -u "http://target/api?id=1" --mode guided -n 10000 -c 50
+ryofuzz -u "http://target/api" -d '{"user":"test"}' --mode guided -n 50000
 ```
 
-## Usage
+### Smart (default)
 
-```
-ryofuzz [flags]
+Known payloads + type-aware smart generation + behavioral differential analysis. Good balance of speed and coverage.
 
-Flags:
-  -u, --url string           Target URL (required)
-  -X, --method string        HTTP method (auto-detected if not provided)
-  -d, --data string          Request body (JSON or URL-encoded)
-  -H, --header strings       Custom headers (repeatable)
-  -b, --cookie string        Cookies
-  -t, --tests string         Test modules: all, sqli, xss, ssti, ... (default "all")
-  -c, --concurrency int      Concurrent goroutines (default 20)
-  -v, --verbose              Verbose output
-  -o, --output string        Output file
-      --format string        Format: text, json, markdown, html (default "text")
-      --proxy string         Proxy (e.g., http://127.0.0.1:8080)
-      --timeout int          Timeout per request in seconds (default 15)
-      --delay int            Delay between requests in ms
-      --rate int             Rate limit (requests/second, 0=unlimited)
-      --mode string          Mode: smart, payloads, mutate (default "smart")
-  -n, --mutations int        Number of radamsa-style mutations (0=auto)
-      --follow               Follow redirects
-
-Authentication:
-      --auth string          Auth method: basic, bearer, form, cookie, custom
-      --auth-user string     Username
-      --auth-pass string     Password
-      --auth-token string    Token/API key
-      --auth-url string      Login URL (for auth=form)
-      --auth-body string     Login body (for auth=form)
-      --auth-field string    Token field in login response (default "token")
-      --auth-header string   Header to send token (default "Authorization")
-      --auth-prefix string   Token prefix (default "Bearer")
-
-Crawler:
-      --crawl                Discover endpoints before fuzzing
-      --crawl-depth int      Max crawl depth (default 3)
-      --ignore-robots        Ignore robots.txt
-
-OOB Callbacks:
-      --oob string           OOB domain/IP for callbacks
-      --oob-listen int       OOB listener port (default 8888)
-      --oob-mode string      OOB mode: local, ngrok, private (default "local")
-
-Plugins:
-      --plugins-dir string   Custom plugins directory
+```bash
+ryofuzz -u "http://target/api?id=1&name=test" -t all -c 50
+ryofuzz -u "http://target/api" -d '{"user":"admin","role":"viewer"}' -t sqli,ssti
 ```
 
-## Vulnerability Modules
+### Payloads / Mutate
 
-### OWASP Top 10 (2021)
+`payloads` = only known payloads, no mutations. `mutate` = radamsa-style random mutations only.
 
-| Module | Class | Detection |
-|--------|-------|-----------|
-| `sqli` | SQL Injection | Error-based, time-based, boolean-based, union, stacked, OOB |
-| `xss` | Cross-Site Scripting | Reflection detection, DOM vectors, polyglots, WAF bypass |
-| `ssti` | Server-Side Template Injection | Jinja2, Twig, Freemarker, Thymeleaf, Mako, Pebble, Velocity, EJS, Pug, Handlebars, Smarty |
-| `ssrf` | Server-Side Request Forgery | AWS/GCP/Azure metadata, localhost bypass, protocol smuggling |
-| `cmdi` | OS Command Injection | Linux/Windows, time-based, wildcard/IFS bypass |
-| `lfi` | Local File Inclusion | Path traversal, PHP wrappers, log poisoning, null byte |
-| `xxe` | XML External Entity | File read, SSRF via XXE, blind/OOB |
-| `deser` | Insecure Deserialization | PHP, Python pickle, Java, Node.js, .NET |
-| `cors` | CORS Misconfiguration | Origin reflection, null origin, credential leaks |
-| `csp` | CSP Analysis | Weak directives, bypass vectors |
+```bash
+ryofuzz -u "http://target/search?q=test" --mode payloads -t xss
+ryofuzz -u "http://target/api" -d '{"data":"test"}' --mode mutate -n 10000
+```
 
-### OWASP API Security Top 10 (2023)
+## Vulnerability Modules (29)
 
-| Module | Class |
-|--------|-------|
-| `idor` | Broken Object Level Authorization |
-| `mass-assign` | Broken Object Property Level Authorization |
-| `ratelimit` | Unrestricted Resource Consumption |
-| `graphql` | Introspection, batching, alias enumeration |
-| `logic` | Business logic flaws (negative values, zero amounts) |
-
-### OWASP LLM Top 10 (2025)
-
-| Module | Class |
-|--------|-------|
-| `prompt` | Prompt Injection (direct, indirect, jailbreak, system prompt leak) |
-
-### Advanced / Underground
-
-| Module | Class |
-|--------|-------|
-| `prototype` | Prototype Pollution (Node.js __proto__, constructor) |
-| `jwt` | JWT Algorithm Confusion, alg:none, JWK injection |
-| `smuggling` | HTTP Request Smuggling (CL/TE desync) |
-| `cache` | Web Cache Poisoning (unkeyed headers) |
-| `hostheader` | Host Header Injection (password reset poisoning) |
-| `crlf` | CRLF Injection / Response Splitting |
+| Module | What it tests |
+|--------|---------------|
+| `sqli` | SQL Injection (error, time, boolean, union, stacked, OOB) |
+| `xss` | Cross-Site Scripting (context-aware: only confirms when executable in HTML) |
+| `ssti` | Server-Side Template Injection (Jinja2, Twig, Freemarker, Thymeleaf, Mako, Pebble, Velocity, EJS, Pug, Handlebars, Smarty) |
+| `ssrf` | Server-Side Request Forgery (AWS/GCP/Azure metadata, IP bypass, protocol smuggling) |
+| `cmdi` | OS Command Injection (Linux/Windows, time-based, bypass) |
+| `lfi` | Local File Inclusion (traversal, PHP wrappers, null byte, log poisoning) |
+| `xxe` | XML External Entity (file read, blind OOB, SSRF via XXE) |
+| `nosqli` | NoSQL Injection (MongoDB operators, JS injection) |
+| `idor` | Insecure Direct Object Reference |
 | `redirect` | Open Redirect |
-| `nosqli` | NoSQL Injection (MongoDB operators) |
+| `crlf` | CRLF Injection / Response Splitting |
+| `prototype` | Prototype Pollution (Node.js) |
+| `jwt` | JWT Algorithm Confusion / alg:none / JWK injection |
+| `mass-assign` | Mass Assignment / Parameter Pollution |
+| `race` | Race Conditions |
+| `smuggling` | HTTP Request Smuggling |
+| `cors` | CORS Misconfiguration |
+| `csp` | Content Security Policy analysis |
+| `graphql` | GraphQL Introspection / Batching |
+| `deser` | Insecure Deserialization (PHP, Python, Java, Node, .NET) |
 | `ldapi` | LDAP Injection |
 | `xpathi` | XPath Injection |
+| `logic` | Business Logic Flaws (negative values, zero amounts) |
+| `ratelimit` | Rate Limit bypass |
 | `verb` | HTTP Verb Tampering |
-| `race` | Race Conditions |
+| `hostheader` | Host Header Injection |
+| `cache` | Web Cache Poisoning |
+| `ws` | WebSocket Security |
+| `prompt` | AI/LLM Prompt Injection |
+| `cve` | CVE-aware targeted fuzzing (auto-detects framework from headers) |
 
-## Advanced Usage
+## Features
 
-### Crawl + Fuzz
+### Auto-detection of injection points
+
+Automatically finds all fuzzable parameters:
+- URL query params
+- Path segments (numeric, UUID, hex)
+- JSON body (nested fields)
+- URL-encoded form body
+- HTTP headers
+- Cookies
+
+### Smart payload generation
+
+Type-aware mutations based on detected value type:
+- Integer: boundary values, overflow, type confusion
+- Float: IEEE 754 edge cases, precision
+- String: length variations, unicode, format strings
+- URL: internal IPs, metadata, protocol smuggling, bypass patterns
+- Email: header injection, domain tricks
+- UUID: enumeration, format confusion
+- JSON: nesting, prototype pollution, duplicate keys
+
+### False positive filtering
+
+Context-aware filtering eliminates noise:
+- Checks Content-Type before claiming XSS (only HTML is executable)
+- Detects when server just echoes payload in error messages
+- Verifies HTML context for reflection (body vs attribute vs script vs safe)
+- Filters CVE probe errors that are just URL parse failures
+- Suppresses 500 floods when >20% responses are errors
+
+### CVE-aware probing
+
+Fingerprints the server via response headers, then generates targeted fuzzing:
+- Apache: path traversal bypasses (CVE-2021-41773 style)
+- Nginx: alias traversal, off-by-slash
+- Express/Node.js: prototype pollution chains
+- Spring/Java: SpEL injection, Spring4Shell patterns
+- Next.js: middleware bypass (CVE-2025-29927)
+- Django/Flask: debug pages, SSTI
+- Laravel: Ignition RCE patterns
+- ASP.NET: ViewState, padding oracle
+- Tomcat: Ghostcat, manager paths
+
+### OOB callback server
+
+Built-in out-of-band listener for blind vulnerability confirmation:
 
 ```bash
-ryofuzz -u "http://target" --crawl --crawl-depth 3 -t all -c 50
+# Local (your IP is reachable from target)
+ryofuzz -u "http://target/api" -t ssrf --oob 10.10.14.5 --oob-listen 8888 --oob-mode private
+
+# Via ngrok
+ryofuzz -u "http://target/api" -t ssrf --oob auto --oob-mode ngrok
+
+# CTF (private network)
+ryofuzz -u "http://10.10.10.50/api?file=x" -t ssrf --oob 10.10.14.5:8888 --oob-mode private
 ```
 
-### With Authentication
+### Web crawler
+
+Discovers endpoints before fuzzing:
+
+```bash
+ryofuzz -u "http://target" --crawl --crawl-depth 3 -t all
+```
+
+Extracts: links, forms, API routes from JavaScript, sitemap.xml, robots.txt.
+
+### Authentication
 
 ```bash
 # Bearer token
-ryofuzz -u "http://target/api/users" -t idor,sqli --auth bearer --auth-token "eyJ..."
+ryofuzz -u "http://target/api" -t all --auth bearer --auth-token "eyJ..."
 
-# Form login (auto-extracts token from response)
-ryofuzz -u "http://target/admin/api" -t all \
-  --auth form \
-  --auth-url "http://target/api/login" \
-  --auth-body '{"email":"user@test.com","password":"pass123"}' \
-  --auth-field "access_token"
+# Form login (auto-extracts token)
+ryofuzz -u "http://target/admin" -t all \
+  --auth form --auth-url "http://target/login" \
+  --auth-body '{"email":"user@test.com","password":"pass"}' --auth-field "token"
 
 # Basic auth
 ryofuzz -u "http://target/api" -t all --auth basic --auth-user admin --auth-pass secret
 
-# Custom API key header
-ryofuzz -u "http://target/api" -t all --auth custom --auth-token "sk-xxxx" --auth-header "X-API-Key"
+# API key
+ryofuzz -u "http://target/api" -t all --auth custom --auth-token "sk-xxx" --auth-header "X-API-Key"
 ```
 
-### OOB Callbacks (Blind SSRF, XXE, CMDi)
+Auto-refreshes when session expires (detects 401/403).
+
+### Nuclei template compatibility
+
+Runs nuclei community templates natively. 10,000+ templates for known CVEs.
 
 ```bash
-# Local listener (your machine is reachable from target)
-ryofuzz -u "http://target/api?url=x" -t ssrf,xxe --oob 10.10.14.5 --oob-listen 8888 --oob-mode private
+# Setup (once)
+git clone --depth 1 https://github.com/projectdiscovery/nuclei-templates.git ~/nuclei-templates
 
-# Via ngrok (start ngrok separately: ngrok http 8888)
-ryofuzz -u "http://target/api" -t ssrf --oob auto --oob-mode ngrok
+# Run CVE templates + fuzzing together
+ryofuzz -u "http://target" -t all --nuclei-templates ~/nuclei-templates/http/cves/
 
-# Private network (CTF)
-ryofuzz -u "http://10.10.10.50/api?file=x" -t ssrf,lfi --oob 10.10.14.5:8888 --oob-mode private
+# Filter by severity
+ryofuzz -u "http://target" -t all --nuclei-templates ~/nuclei-templates/http/ --nuclei-severity critical,high
+
+# Filter by tags
+ryofuzz -u "http://target" -t all --nuclei-templates ~/nuclei-templates/http/ --nuclei-tags rce,ssrf,lfi
 ```
 
-### HTML Report
+### Plugin system
 
-```bash
-ryofuzz -u "http://target/api?id=1" -t all --format html -o report.html
-```
-
-### With Burp Suite Proxy
-
-```bash
-ryofuzz -u "http://target/api" -d '{"q":"test"}' -t all --proxy http://127.0.0.1:8080
-```
-
-### Mutation-Only Mode (0-day Research)
-
-```bash
-# Pure radamsa-style mutations (no known payloads, fuzz for parser bugs)
-ryofuzz -u "http://target/api" -d '{"data":"test"}' --mode mutate -n 10000
-```
-
-## Plugin System
-
-Create custom checks as YAML files in `~/.ryofuzz/plugins/` or `./plugins/`:
+Extend with custom YAML checks:
 
 ```yaml
+# ~/.ryofuzz/plugins/custom-check.yaml
 name: custom-waf-bypass
-description: Custom SQLi bypass for specific WAF
-author: your-handle
 severity: critical
 module: sqli-custom
 owasp: "A03:2021 Injection"
@@ -248,115 +239,161 @@ cwe: CWE-89
 payloads:
   - value: "' /*!50000OR*/ 1=1-- -"
     variant: mysql-versioned-comment
-  - value: "' %55NION %53ELECT 1,2,3-- -"
-    variant: hex-keywords
 detection:
   method: contains
   patterns:
     - "syntax error"
     - "mysql"
-    - "warning"
 ```
-
-Load custom plugins:
 
 ```bash
 ryofuzz -u "http://target" --plugins-dir ./my-plugins -t all
 ```
 
-## Nuclei Template Compatibility
-
-ryofuzz can run [nuclei-templates](https://github.com/projectdiscovery/nuclei-templates) natively. This gives you access to 10,000+ community templates for known CVEs, misconfigurations, and exposures.
-
-### Setup
+### Output formats
 
 ```bash
-# Clone nuclei-templates
-git clone --depth 1 https://github.com/projectdiscovery/nuclei-templates.git ~/nuclei-templates
+# Terminal (colored, default)
+ryofuzz -u "http://target" -t all
+
+# JSON (for pipelines)
+ryofuzz -u "http://target" -t all --format json -o results.json
+
+# Markdown
+ryofuzz -u "http://target" -t all --format markdown -o report.md
+
+# HTML (self-contained dark theme with SVG charts)
+ryofuzz -u "http://target" -t all --format html -o report.html
 ```
 
-### Usage
+### Proxy support
+
+Route traffic through Burp Suite or ZAP:
 
 ```bash
-# Run all critical/high CVE templates
-ryofuzz -u "http://target" -t all --nuclei-templates ~/nuclei-templates/http/cves/
-
-# Filter by tags
-ryofuzz -u "http://target" -t all --nuclei-templates ~/nuclei-templates/http/ --nuclei-tags rce,sqli
-
-# Misconfigurations only
-ryofuzz -u "http://target" -t all --nuclei-templates ~/nuclei-templates/http/misconfiguration/
-
-# Combined: nuclei templates + ryofuzz fuzzing
-ryofuzz -u "http://target/api?id=1" -t all --nuclei-templates ~/nuclei-templates/http/cves/ --mode smart
+ryofuzz -u "http://target/api?id=1" -t all --proxy http://127.0.0.1:8080
 ```
 
-### Why use nuclei templates through ryofuzz?
+## Full CLI reference
 
-- **Single tool** - no need to install nuclei separately
-- **Combined results** - nuclei findings + fuzzing findings in one report
-- **Fuzz around CVEs** - ryofuzz tests the endpoint for unknown bugs while nuclei checks for known ones
+```
+ryofuzz [flags]
+ryofuzz version
 
-### Supported template features
+Target:
+  -u, --url string           Target URL (required)
+  -X, --method string        HTTP method (auto-detected)
+  -d, --data string          Request body (JSON or URL-encoded)
+  -H, --header strings       Custom headers (repeatable)
+  -b, --cookie string        Cookies
 
-- HTTP requests (GET, POST, PUT, etc.)
-- Word matchers (body, header)
-- Regex matchers
-- Status code matchers
-- Matchers condition (AND/OR)
-- Negative matchers
-- Multiple paths per template
-- {{BaseURL}} / {{RootURL}} variables
+Fuzzing:
+  -t, --tests string         Modules: all, sqli, xss, ssti, ssrf, ... (default "all")
+      --mode string          Mode: smart, payloads, mutate, guided, behavioral (default "smart")
+  -n, --mutations int        Payload count for guided/mutate mode (default auto)
+  -c, --concurrency int      Concurrent workers (default 20)
+      --timeout int          Request timeout in seconds (default 15)
+      --delay int            Delay between requests in ms
+      --rate int             Max requests/second (0=unlimited)
+      --follow               Follow redirects
+
+Output:
+  -o, --output string        Output file
+      --format string        text, json, markdown, html (default "text")
+  -v, --verbose              Verbose output
+
+Auth:
+      --auth string          Method: basic, bearer, form, cookie, custom
+      --auth-user string     Username
+      --auth-pass string     Password
+      --auth-token string    Token/API key
+      --auth-url string      Login URL (for form auth)
+      --auth-body string     Login body (for form auth)
+      --auth-field string    Token field in login response
+      --auth-header string   Header name for token (default "Authorization")
+      --auth-prefix string   Token prefix (default "Bearer")
+
+Discovery:
+      --crawl                Crawl before fuzzing
+      --crawl-depth int      Max depth (default 3)
+      --ignore-robots        Ignore robots.txt
+
+OOB:
+      --oob string           OOB domain/IP
+      --oob-listen int       Listener port (default 8888)
+      --oob-mode string      local, ngrok, private (default "local")
+
+Nuclei:
+      --nuclei-templates string   Path to nuclei-templates directory
+      --nuclei-tags string        Filter by tags (comma-separated)
+      --nuclei-severity string    Filter by severity (default "critical,high")
+
+Plugins:
+      --plugins-dir string   Custom plugins directory
+
+Other:
+      --proxy string         HTTP proxy (e.g., http://127.0.0.1:8080)
+```
 
 ## Architecture
 
 ```
 ryofuzz/
-├── main.go
-├── cmd/root.go                  # CLI and orchestration
+├── cmd/root.go                  # CLI orchestration
 ├── internal/
-│   ├── input/parser.go          # Auto-detection of injection points
+│   ├── behavioral/engine.go     # Behavioral intent mapping (Phase 1-2-3)
+│   ├── fuzzer/guided.go         # Coverage-guided evolutionary fuzzer
+│   ├── input/parser.go          # Injection point auto-detection
 │   ├── engine/engine.go         # Concurrent request engine
-│   ├── fuzzer/guided.go         # Coverage-guided evolutionary fuzzer (AFL++ style)
-│   ├── mutator/                 # Radamsa-style mutations + smart type-aware generation
-│   ├── payloads/database.go     # Embedded payload database (740+)
-│   ├── vulns/                   # 29 vulnerability modules
-│   ├── analyzer/                # Behavioral analysis + FP filter
-│   ├── nuclei/runner.go         # Nuclei template parser and executor
-│   ├── reporter/                # Output: text, json, markdown, html
-│   ├── oob/                     # OOB callback server (local/ngrok/private)
-│   ├── auth/                    # Authentication management
-│   ├── crawler/                 # Web crawler + JS parser
-│   └── plugins/                 # YAML plugin system
-└── plugins/                     # Example plugins
+│   ├── mutator/                 # Radamsa-style + smart type-aware mutations
+│   ├── payloads/database.go     # 740+ embedded payloads
+│   ├── vulns/                   # 29 vulnerability modules + CVE probe
+│   ├── analyzer/                # Behavioral clustering + FP filter
+│   ├── nuclei/runner.go         # Nuclei template executor
+│   ├── reporter/                # text, json, markdown, html output
+│   ├── oob/                     # OOB callback server
+│   ├── auth/                    # Authentication manager
+│   ├── crawler/                 # Web spider + JS parser
+│   └── plugins/                 # YAML plugin loader
+└── plugins/                     # Example custom checks
 ```
 
-## How It Works
+## Examples
 
-1. **Parse** - Detects all injection points (query params, JSON fields, form params, path segments, headers, cookies)
-2. **Baseline** - Sends the original request and captures the response as reference
-3. **Generate** - Creates payloads from the embedded database + radamsa-style mutations + encoding variants
-4. **Fuzz** - Sends all payloads concurrently with configurable rate limiting
-5. **Analyze** - Compares each response against baseline (status code, body length, timing, reflection, error patterns)
-6. **Report** - Outputs findings with confidence scoring, evidence, and OWASP/CWE classification
+```bash
+# Full scan with all modules
+ryofuzz -u "http://target/api?id=1&name=test" -t all -c 50
 
-## Detection Methods
+# Understand server behavior first (recommended for research)
+ryofuzz -u "http://target/endpoint?param=value" --mode behavioral
 
-- **Error-based** - SQL errors, template errors, stack traces in response
-- **Time-based** - Response time delta > 4.5s with sleep payloads
-- **Boolean-based** - Body length differential between true/false conditions
-- **Reflection** - Payload (or dangerous characters) appear in response body
-- **Status differential** - Response status differs from baseline
-- **Header analysis** - CORS headers, CSP, injected headers
-- **OOB callbacks** - External interaction confirms blind vulnerabilities
+# Deep fuzzing for 0-day discovery
+ryofuzz -u "http://target/api?id=1" --mode guided -n 50000 -c 100
+
+# JSON API with auth
+ryofuzz -u "http://target/api/users" -d '{"search":"test"}' \
+  -t sqli,ssti,nosqli --auth bearer --auth-token "eyJ..."
+
+# Crawl + fuzz + nuclei + HTML report
+ryofuzz -u "http://target" --crawl -t all \
+  --nuclei-templates ~/nuclei-templates/http/cves/ \
+  --format html -o report.html
+
+# Blind SSRF with OOB callbacks
+ryofuzz -u "http://target/webhook" -d '{"url":"http://x.com"}' \
+  -t ssrf --oob 10.10.14.5 --oob-mode private
+
+# Through Burp proxy
+ryofuzz -u "http://target/api?q=test" -t all --proxy http://127.0.0.1:8080
+```
 
 ## Disclaimer
 
-This tool is intended for **authorized security testing** and **CTF challenges** only. Only use against systems you have explicit permission to test. Unauthorized access to computer systems is illegal.
+For authorized security testing and CTF challenges only. Do not use against systems without explicit permission.
 
 ## Author
 
-**RyoSec** - Offensive Security Consulting
+RyoSec - Renan Zapelini
 
 ## License
 
