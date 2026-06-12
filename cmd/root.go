@@ -305,24 +305,71 @@ func run(cmd *cobra.Command, args []string) error {
 				baseline.StatusCode, baseline.Status, baseline.BodyLength, baseline.TimeMs)
 		}
 
-		// Gerar payloads
+		// Generate payloads
 		var allPayloads []mutator.Payload
 		for _, mod := range modules {
 			plds := mod.GeneratePayloads(points, mode, mutations)
 			allPayloads = append(allPayloads, plds...)
 		}
 
+		// Smart payload generation (type-aware fuzzing — the core differentiator)
+		if mode == "smart" || mode == "mutate" {
+			gen := &mutator.SmartGen{}
+			perPoint := 500
+			if mutations > 0 {
+				perPoint = mutations / max(len(points), 1)
+			}
+			for _, point := range points {
+				smartPayloads := gen.Generate(point.OriginalValue, perPoint)
+				for _, sp := range smartPayloads {
+					allPayloads = append(allPayloads, mutator.Payload{
+						Value: sp, Point: point, Module: "fuzz", Variant: "smartgen",
+					})
+				}
+			}
+		}
+
+		// CVE-aware probing (uses baseline headers for fingerprinting)
+		cveProbe := &vulns.CVEProbeModule{}
+		if baseline != nil {
+			hdrs := make(map[string][]string)
+			for k, v := range baseline.Headers {
+				hdrs[k] = v
+			}
+			cveProbe.SetFingerprints(hdrs)
+			cvePayloads := cveProbe.GeneratePayloads(points, mode, mutations)
+			allPayloads = append(allPayloads, cvePayloads...)
+		}
+
 		if target == targetURL {
-			fmt.Printf("[*] Total payloads generated: %d\n", len(allPayloads))
+			fmt.Printf("[*] Total payloads generated: %d (modules=%d, smartgen=%d/point, cve=%s)\n",
+				len(allPayloads), len(modules), 500, cveProbe.ServerHeader)
 			fmt.Println("[*] Starting fuzzing...")
 		}
 
-		// Executar fuzzing
+		// Execute fuzzing
 		results := engine.Fuzz(cfg, points, allPayloads, concurrency, delay, rateLimit, verbose)
 		totalRequests += len(results)
 
-		// Analisar
-		findings := analyzer.Analyze(baseline, results, modules)
+		// Module-based analysis (pattern matching)
+		findings := analyzer.Analyze(baseline, results, append(modules, cveProbe))
+
+		// Behavioral analysis (anomaly detection — what makes this a fuzzer, not a scanner)
+		behaviorFindings := analyzer.BehaviorAnalysis(baseline, results)
+		findings = append(findings, behaviorFindings...)
+
+		// Timing analysis (statistical outlier detection)
+		timingFindings := analyzer.TimingAnalysis(baseline, results)
+		findings = append(findings, timingFindings...)
+
+		// Differential analysis (boolean oracle detection)
+		diffFindings := analyzer.DifferentialPairs(results)
+		findings = append(findings, diffFindings...)
+
+		// Reflection scan
+		reflectionFindings := analyzer.ReflectionScan(results, baseline.Body)
+		findings = append(findings, reflectionFindings...)
+
 		allFindings = append(allFindings, findings...)
 	}
 
