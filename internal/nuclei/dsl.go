@@ -80,7 +80,54 @@ func dslFunctions() map[string]interface{} {
 		"compare_versions": dslCompareVersions,
 		"status_code":      func(v interface{}) int { n, _ := strconv.Atoi(toStr(v)); return n },
 		"repeat":           func(s string, n int) string { return strings.Repeat(s, n) },
+		// case-variant aliases seen in templates
+		"toupper":   strings.ToUpper,
+		"tolower":   strings.ToLower,
+		"tostring":  toStr,
+		"to_title":  strings.Title,
+		"mmh3":      dslMMH3,
 	}
+}
+
+// dslMMH3 computes the MurmurHash3 (32-bit) of the input, as used by favicon
+// hash templates (the value nuclei prints for favicons).
+func dslMMH3(s string) int32 {
+	data := []byte(s)
+	const c1, c2 = 0xcc9e2d51, 0x1b873593
+	var h uint32
+	nblocks := len(data) / 4
+	for i := 0; i < nblocks; i++ {
+		k := uint32(data[i*4]) | uint32(data[i*4+1])<<8 | uint32(data[i*4+2])<<16 | uint32(data[i*4+3])<<24
+		k *= c1
+		k = (k << 15) | (k >> 17)
+		k *= c2
+		h ^= k
+		h = (h << 13) | (h >> 19)
+		h = h*5 + 0xe6546b64
+	}
+	var k uint32
+	tail := data[nblocks*4:]
+	switch len(tail) {
+	case 3:
+		k ^= uint32(tail[2]) << 16
+		fallthrough
+	case 2:
+		k ^= uint32(tail[1]) << 8
+		fallthrough
+	case 1:
+		k ^= uint32(tail[0])
+		k *= c1
+		k = (k << 15) | (k >> 17)
+		k *= c2
+		h ^= k
+	}
+	h ^= uint32(len(data))
+	h ^= h >> 16
+	h *= 0x85ebca6b
+	h ^= h >> 13
+	h *= 0xc2b2ae35
+	h ^= h >> 16
+	return int32(h)
 }
 
 func dslHMAC(algo, data, key string) string {
@@ -193,10 +240,15 @@ var knownDSLFuncs = func() map[string]bool {
 
 var dslFuncCallRe = regexp.MustCompile(`([a-zA-Z_][a-zA-Z0-9_]*)\s*\(`)
 
+var dslStringLitRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'`)
+
 // unknownDSLFunction returns the first function name used in expr that is not
 // implemented, and ok=false. If all functions are known, returns ("", true).
+// String literals are stripped first so that text like "alert(1)" inside a
+// string argument is not mistaken for a function call.
 func unknownDSLFunction(expr string) (string, bool) {
-	for _, m := range dslFuncCallRe.FindAllStringSubmatch(expr, -1) {
+	stripped := dslStringLitRe.ReplaceAllString(expr, `""`)
+	for _, m := range dslFuncCallRe.FindAllStringSubmatch(stripped, -1) {
 		fn := m[1]
 		// builtins from expr-lang we allow
 		switch fn {
