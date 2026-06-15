@@ -193,10 +193,16 @@ func (m *Manager) handleCallbacks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Manager) handleToken(w http.ResponseWriter, r *http.Request) {
-	token := strings.TrimPrefix(r.URL.Path, "/t/")
-	if token == "" {
+	rawToken := strings.TrimPrefix(r.URL.Path, "/t/")
+	if rawToken == "" {
 		http.NotFound(w, r)
 		return
+	}
+
+	// Extract token (first path segment after /t/), ignore any trailing path
+	token := rawToken
+	if idx := strings.Index(rawToken, "/"); idx > 0 {
+		token = rawToken[:idx]
 	}
 
 	m.mu.RLock()

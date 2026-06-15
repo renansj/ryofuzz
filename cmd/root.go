@@ -166,8 +166,12 @@ func run(cmd *cobra.Command, args []string) error {
 			Mode:   oobMode,
 		}
 		oobManager = oob.NewManager(oobCfg)
-		go oobManager.Start()
-		fmt.Printf("[+] OOB server listening on %s (domain: %s)\n", oobCfg.Listen, oobManager.Domain())
+		if err := oobManager.Start(); err != nil {
+			fmt.Printf("[-] OOB server failed: %v\n", err)
+			oobManager = nil
+		} else {
+			fmt.Printf("[+] OOB server listening on %s (domain: %s)\n", oobCfg.Listen, oobManager.Domain())
+		}
 	}
 
 	// --- Autenticação ---
@@ -457,6 +461,21 @@ func run(cmd *cobra.Command, args []string) error {
 		for _, mod := range modules {
 			plds := mod.GeneratePayloads(points, mode, mutations)
 			allPayloads = append(allPayloads, plds...)
+		}
+
+		// Inject OOB callback URLs for blind SSRF/XXE/RFI detection
+		if oobManager != nil {
+			for _, point := range points {
+				oobURL := oobManager.GenerateURL("ssrf-oob", "ssrf", point.Name)
+				allPayloads = append(allPayloads, mutator.Payload{
+					Value: oobURL, Point: point, Module: "ssrf", Variant: "oob-callback",
+				})
+				// Also try with https scheme and different paths
+				oobURL2 := oobManager.GenerateURL("ssrf-oob-redir", "ssrf", point.Name)
+				allPayloads = append(allPayloads, mutator.Payload{
+					Value: oobURL2 + "/api/internal", Point: point, Module: "ssrf", Variant: "oob-callback-path",
+				})
+			}
 		}
 
 		// Smart payload generation (type-aware fuzzing - the core differentiator)
