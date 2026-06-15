@@ -2,9 +2,11 @@ package fuzzer
 
 import (
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -36,6 +38,7 @@ type CoverageGuidedFuzzer struct {
 	stats        FuzzStats
 	mu           sync.Mutex
 	client       *http.Client
+	rng          *rand.Rand
 
 	// Callbacks
 	OnNewCoverage func(entry CorpusEntry)
@@ -108,6 +111,7 @@ func New(cfg Config) *CoverageGuidedFuzzer {
 		coverageMap: make(map[string]bool),
 		queue:       make([]CorpusEntry, 0),
 		stats:       FuzzStats{StartTime: time.Now()},
+		rng:         rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -123,6 +127,11 @@ func (f *CoverageGuidedFuzzer) TestConnection() ResponseInfo {
 // This is the core loop equivalent to AFL's fuzz_one().
 func (f *CoverageGuidedFuzzer) Fuzz(maxExecs int64, maxTime time.Duration) []CorpusEntry {
 	f.stats.StartTime = time.Now()
+
+	// Load persisted corpus if available
+	if _, err := os.Stat(defaultCorpusPath); err == nil {
+		_ = f.LoadCorpus(defaultCorpusPath)
+	}
 
 	// Phase 1: Seed with original values and initial mutations
 	f.seedCorpus()
@@ -163,12 +172,52 @@ func (f *CoverageGuidedFuzzer) Fuzz(maxExecs int64, maxTime time.Duration) []Cor
 	}
 	fmt.Println()
 
+	// Persist corpus for next run
+	_ = f.SaveCorpus(defaultCorpusPath)
+
 	return f.corpus
 }
 
 // GetStats returns current fuzzer statistics
 func (f *CoverageGuidedFuzzer) GetStats() FuzzStats {
 	return f.stats
+}
+
+const defaultCorpusPath = ".ryofuzz-corpus.json"
+
+// SaveCorpus serializes the corpus to a JSON file
+func (f *CoverageGuidedFuzzer) SaveCorpus(path string) error {
+	f.mu.Lock()
+	data, err := json.Marshal(f.corpus)
+	f.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// LoadCorpus deserializes corpus entries from a JSON file
+func (f *CoverageGuidedFuzzer) LoadCorpus(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var entries []CorpusEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	for _, e := range entries {
+		fp := f.responseFingerprint(e.Response)
+		if !f.coverageMap[fp] {
+			f.coverageMap[fp] = true
+			f.corpus = append(f.corpus, e)
+			f.stats.CorpusSize++
+			f.stats.TotalCoverage++
+		}
+	}
+	f.mu.Unlock()
+	return nil
 }
 
 // seedCorpus initializes the corpus with seed inputs
@@ -263,7 +312,8 @@ func (f *CoverageGuidedFuzzer) fuzzOne(entry CorpusEntry) {
 	f.mu.Unlock()
 }
 
-// selectEntry picks the next corpus entry to mutate (power schedule)
+// selectEntry picks the next corpus entry to mutate (power schedule).
+// Returns a copy of the entry so callers can use it without holding the lock.
 func (f *CoverageGuidedFuzzer) selectEntry() *CorpusEntry {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -286,8 +336,9 @@ func (f *CoverageGuidedFuzzer) selectEntry() *CorpusEntry {
 		for i := range f.corpus {
 			f.corpus[i].Energy = calcEnergy(f.corpus[i].Response)
 		}
-		idx := rand.Intn(len(f.corpus))
-		return &f.corpus[idx]
+		idx := f.rng.Intn(len(f.corpus))
+		entry := f.corpus[idx]
+		return &entry
 	}
 
 	// Weighted random: prefer higher energy
@@ -300,8 +351,9 @@ func (f *CoverageGuidedFuzzer) selectEntry() *CorpusEntry {
 	if topN < 1 {
 		topN = 1
 	}
-	idx := candidates[rand.Intn(topN)]
-	return &f.corpus[idx]
+	idx := candidates[f.rng.Intn(topN)]
+	entry := f.corpus[idx]
+	return &entry
 }
 
 // havoc applies random mutations (AFL's havoc stage)
@@ -311,53 +363,53 @@ func (f *CoverageGuidedFuzzer) havoc(value string, count int) []string {
 	for i := 0; i < count; i++ {
 		mutated := value
 		// Apply 1-5 stacked mutations (like AFL's havoc)
-		numOps := rand.Intn(5) + 1
+		numOps := f.rng.Intn(5) + 1
 		for op := 0; op < numOps; op++ {
-			strategy := rand.Intn(20)
+			strategy := f.rng.Intn(20)
 			switch {
 			case strategy < 4:
 				mutated = mutator.Mutate(mutated, 1)[0]
 			case strategy < 8:
 				// Splice with another corpus entry
 				if len(f.corpus) > 1 {
-					other := f.corpus[rand.Intn(len(f.corpus))]
-					mutated = splice(mutated, other.Value)
+					other := f.corpus[f.rng.Intn(len(f.corpus))]
+						mutated = f.splice(mutated, other.Value)
 				}
 			case strategy < 12:
 				// Insert interesting token
-				token := interestingTokens[rand.Intn(len(interestingTokens))]
-				pos := rand.Intn(len(mutated) + 1)
+				token := interestingTokens[f.rng.Intn(len(interestingTokens))]
+				pos := f.rng.Intn(len(mutated) + 1)
 				mutated = mutated[:pos] + token + mutated[pos:]
 			case strategy < 15:
 				// Replace with interesting value at random position
 				if len(mutated) > 2 {
-					pos := rand.Intn(len(mutated))
-					end := pos + rand.Intn(min(10, len(mutated)-pos)) + 1
-					token := interestingTokens[rand.Intn(len(interestingTokens))]
+					pos := f.rng.Intn(len(mutated))
+					end := pos + f.rng.Intn(min(10, len(mutated)-pos)) + 1
+					token := interestingTokens[f.rng.Intn(len(interestingTokens))]
 					mutated = mutated[:pos] + token + mutated[end:]
 				}
 			case strategy < 17:
 				// Delete random chunk
 				if len(mutated) > 5 {
-					pos := rand.Intn(len(mutated))
-					end := pos + rand.Intn(min(20, len(mutated)-pos)) + 1
+					pos := f.rng.Intn(len(mutated))
+					end := pos + f.rng.Intn(min(20, len(mutated)-pos)) + 1
 					mutated = mutated[:pos] + mutated[end:]
 				}
 			case strategy < 19:
 				// Repeat random chunk
 				if len(mutated) > 2 {
-					pos := rand.Intn(len(mutated))
-					end := pos + rand.Intn(min(10, len(mutated)-pos)) + 1
+					pos := f.rng.Intn(len(mutated))
+					end := pos + f.rng.Intn(min(10, len(mutated)-pos)) + 1
 					chunk := mutated[pos:end]
-					reps := rand.Intn(20) + 2
+					reps := f.rng.Intn(20) + 2
 					mutated = mutated[:pos] + strings.Repeat(chunk, reps) + mutated[end:]
 				}
 			default:
 				// Flip random bytes
 				if len(mutated) > 0 {
 					bytes := []byte(mutated)
-					pos := rand.Intn(len(bytes))
-					bytes[pos] ^= byte(1 << uint(rand.Intn(8)))
+					pos := f.rng.Intn(len(bytes))
+					bytes[pos] ^= byte(1 << uint(f.rng.Intn(8)))
 					mutated = string(bytes)
 				}
 			}
@@ -388,7 +440,7 @@ func (f *CoverageGuidedFuzzer) execute(value string, point input.InjectionPoint)
 	defer resp.Body.Close()
 
 	// Read limited body (we don't need full body for fingerprinting)
-	buf := make([]byte, 4096)
+	buf := make([]byte, 16384)
 	n, _ := resp.Body.Read(buf)
 	body := string(buf[:n])
 
@@ -657,12 +709,12 @@ func extractErrorClass(body string) string {
 	}
 }
 
-func splice(a, b string) string {
+func (f *CoverageGuidedFuzzer) splice(a, b string) string {
 	if len(a) < 2 || len(b) < 2 {
 		return a + b
 	}
-	splitA := rand.Intn(len(a))
-	splitB := rand.Intn(len(b))
+	splitA := f.rng.Intn(len(a))
+	splitB := f.rng.Intn(len(b))
 	return a[:splitA] + b[splitB:]
 }
 

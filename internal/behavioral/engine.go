@@ -722,7 +722,7 @@ func (e *Engine) send(value string) Probe {
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 16384))
 	headers := make(map[string]string)
 	for k, v := range resp.Header {
 		if len(v) > 0 {

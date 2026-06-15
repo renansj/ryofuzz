@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/renansj/ryofuzz/internal/input"
 )
+
+// package-level seeded rng for reproducibility
+var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 // Payload representa um payload preparado para injeção
 type Payload struct {
@@ -24,7 +28,7 @@ func Mutate(value string, n int) []string {
 	}
 	var results []string
 	for i := 0; i < n; i++ {
-		results = append(results, applyMutation(value, rand.Intn(12)))
+		results = append(results, applyMutation(value, rng.Intn(12)))
 	}
 	return results
 }
@@ -33,23 +37,23 @@ func applyMutation(value string, strategy int) string {
 	switch strategy {
 	case 0: // Repeat block
 		if len(value) > 2 {
-			idx := rand.Intn(len(value) - 1)
-			block := value[idx : idx+1+rand.Intn(min(5, len(value)-idx))]
-			count := rand.Intn(50) + 2
+			idx := rng.Intn(len(value) - 1)
+			block := value[idx : idx+1+rng.Intn(min(5, len(value)-idx))]
+			count := rng.Intn(50) + 2
 			return value[:idx] + strings.Repeat(block, count) + value[idx:]
 		}
 	case 1: // Truncate
 		if len(value) > 1 {
-			return value[:rand.Intn(len(value))]
+			return value[:rng.Intn(len(value))]
 		}
 	case 2: // Null byte injection
-		idx := rand.Intn(len(value) + 1)
+		idx := rng.Intn(len(value) + 1)
 		return value[:idx] + "\x00" + value[idx:]
 	case 3: // Bit flip
 		if len(value) > 0 {
 			bytes := []byte(value)
-			idx := rand.Intn(len(bytes))
-			bytes[idx] ^= byte(1 << uint(rand.Intn(8)))
+			idx := rng.Intn(len(bytes))
+			bytes[idx] ^= byte(1 << uint(rng.Intn(8)))
 			return string(bytes)
 		}
 	case 4: // Integer overflow
@@ -59,7 +63,7 @@ func applyMutation(value string, strategy int) string {
 			"9223372036854775807", "18446744073709551615",
 			"1e308", "1e-308", "NaN", "Infinity", "-Infinity",
 		}
-		return overflows[rand.Intn(len(overflows))]
+		return overflows[rng.Intn(len(overflows))]
 	case 5: // Unicode tricks
 		tricks := []string{
 			"\uff1c\uff53\uff43\uff52\uff49\uff50\uff54\uff1e", // fullwidth <script>
@@ -68,13 +72,13 @@ func applyMutation(value string, strategy int) string {
 			"ﬀ", "ﬁ", "ﬂ", "ﬃ", "ﬄ", // ligatures
 			"\u0041\u030A", // A + combining ring = looks like Å
 		}
-		idx := rand.Intn(len(value) + 1)
-		trick := tricks[rand.Intn(len(tricks))]
+		idx := rng.Intn(len(value) + 1)
+		trick := tricks[rng.Intn(len(tricks))]
 		return value[:idx] + trick + value[idx:]
 	case 6: // Double encoding
 		return doubleEncode(value)
 	case 7: // Deep nesting
-		depth := rand.Intn(50) + 10
+		depth := rng.Intn(50) + 10
 		nested := value
 		for i := 0; i < depth; i++ {
 			nested = `{"x":` + nested + `}`
@@ -82,17 +86,17 @@ func applyMutation(value string, strategy int) string {
 		return nested
 	case 8: // Format string
 		formats := []string{"%s", "%x", "%n", "%d", "{{.}}", "${7*7}", "%00"}
-		return value + formats[rand.Intn(len(formats))]
+		return value + formats[rng.Intn(len(formats))]
 	case 9: // Long string
-		return strings.Repeat(value, rand.Intn(1000)+100)
+		return strings.Repeat(value, rng.Intn(1000)+100)
 	case 10: // Special chars injection
 		specials := []string{
 			"'", "\"", "`", "\\", "\n", "\r", "\t",
 			"<", ">", "&", "|", ";", "$", "(", ")",
 			"{", "}", "[", "]", "\r\n", "\r\n\r\n",
 		}
-		s := specials[rand.Intn(len(specials))]
-		idx := rand.Intn(len(value) + 1)
+		s := specials[rng.Intn(len(specials))]
+		idx := rng.Intn(len(value) + 1)
 		return value[:idx] + s + value[idx:]
 	case 11: // CRLF injection
 		return value + "\r\nInjected-Header: true\r\n"

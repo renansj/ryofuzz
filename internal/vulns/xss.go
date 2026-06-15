@@ -125,9 +125,15 @@ func xssContext(body string, idx int) string {
 			return "safe"
 		}
 	}
-	// Inside <script>
-	if strings.LastIndex(lower, "<script") > strings.LastIndex(lower, "</script") {
-		return "script"
+	// Inside <script> (handles <script>, <script type="...">, etc.)
+	lastOpen := strings.LastIndex(lower, "<script")
+	lastClose := strings.LastIndex(lower, "</script")
+	if lastOpen > lastClose {
+		// Verify the opening tag is complete (has a closing >)
+		after := lower[lastOpen:]
+		if gtIdx := strings.Index(after, ">"); gtIdx >= 0 {
+			return "script"
+		}
 	}
 	// Inside attribute (unmatched quote after =)
 	for _, q := range []string{"=\"", "='"} {
