@@ -298,7 +298,7 @@ Target:
 
 Fuzzing:
   -t, --tests string         Modules: all, sqli, xss, ssti, ssrf, ... (default "all")
-      --mode string          Mode: smart, payloads, mutate, guided, behavioral (default "smart")
+      --mode string          Mode: smart, payloads, mutate, guided, behavioral, authz (default "smart")
   -n, --mutations int        Payload count for guided/mutate mode (default auto)
   -c, --concurrency int      Concurrent workers (default 20)
       --timeout int          Request timeout in seconds (default 15)
@@ -308,7 +308,7 @@ Fuzzing:
 
 Output:
   -o, --output string        Output file
-      --format string        text, json, markdown, html (default "text")
+      --format string        text, json, markdown, html, sarif (default "text")
   -v, --verbose              Verbose output
 
 Auth:
@@ -337,6 +337,12 @@ Nuclei:
       --nuclei-templates string   Path to nuclei-templates directory
       --nuclei-tags string        Filter by tags (comma-separated)
       --nuclei-severity string    Filter by severity (default "critical,high")
+
+Advanced:
+      --openapi string             URL to OpenAPI/Swagger spec for endpoint discovery
+      --taint-scan                 Enable canary propagation for stored/second-order detection
+      --authz-identities strings   Identities for authz testing (name:header:value, repeatable)
+      --log-file string            Request/response JSONL log path (default ".ryofuzz-log.jsonl")
 
 Plugins:
       --plugins-dir string   Custom plugins directory
@@ -471,10 +477,36 @@ ryofuzz -u "http://target" --crawl -t all \
 
 # Blind SSRF with OOB callbacks
 ryofuzz -u "http://target/webhook" -d '{"url":"http://x.com"}' \
-  -t ssrf --oob 10.10.14.5 --oob-mode private
+  -t ssrf --oob 10.10.14.5:8888 --oob-mode private
 
 # Through Burp proxy
 ryofuzz -u "http://target/api?q=test" -t all --proxy http://127.0.0.1:8080
+
+# OpenAPI/Swagger auto-discovery
+ryofuzz --openapi https://target/v2/swagger.json -t all
+
+# Stored/second-order detection via canary propagation
+ryofuzz -u "http://target/api/comments" -d '{"body":"test"}' -t all --taint-scan --crawl
+
+# Differential authorization (detect IDOR/broken auth/privesc)
+ryofuzz -u "http://target/api/users/1" --mode authz \
+  --authz-identities "anon:" \
+  --authz-identities "user:Authorization:Bearer USER_TOKEN" \
+  --authz-identities "admin:Authorization:Bearer ADMIN_TOKEN"
+
+# SARIF output for GitHub Security integration
+ryofuzz -u "http://target" -t all --format sarif -o results.sarif
+
+# Multi-target via stdin
+cat urls.txt | ryofuzz -t sqli,xss
+
+# Full request/response logging for reproducibility
+ryofuzz -u "http://target/api?id=1" -t all --log-file scan.jsonl
+
+# New modules: cache deception, OAuth, upload bypass
+ryofuzz -u "http://target/account/profile" -t cache-deception
+ryofuzz -u "http://target/oauth/authorize?redirect_uri=http://legit.com/cb" -t oauth
+ryofuzz -u "http://target/upload" -d @file.png -t upload
 ```
 
 ## Disclaimer
