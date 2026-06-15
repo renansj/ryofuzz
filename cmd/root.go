@@ -1097,6 +1097,56 @@ doReport:
 				if len(domFindings) > 0 {
 					fmt.Printf("[+] DOM XSS: %d finding(s) on %s\n", len(domFindings), t)
 				}
+
+				// Client-Side Template Injection
+				for _, df := range scanner.ScanCSTI(t, paramNames) {
+					allFindings = append(allFindings, &vulns.Finding{
+						Module: "csti", Severity: "high", Confidence: "high",
+						Title:    fmt.Sprintf("Client-Side Template Injection via %s (%s)", df.Param, df.Sink),
+						Payload:  df.Payload,
+						Evidence: "URL: " + df.URL,
+						OWASP:    "A03:2021 Injection", CWE: "CWE-1336",
+					})
+				}
+				// DOM Clobbering
+				for _, df := range scanner.ScanDOMClobbering(t, paramNames) {
+					allFindings = append(allFindings, &vulns.Finding{
+						Module: "domclob", Severity: "medium", Confidence: "high",
+						Title:    fmt.Sprintf("DOM Clobbering via %s", df.Param),
+						Payload:  df.Payload,
+						Evidence: "URL: " + df.URL,
+						OWASP:    "A03:2021 Injection", CWE: "CWE-79",
+					})
+				}
+				// Client-Side Path Traversal
+				for _, df := range scanner.ScanCSPT(t, paramNames) {
+					allFindings = append(allFindings, &vulns.Finding{
+						Module: "cspt", Severity: "high", Confidence: "medium",
+						Title:    fmt.Sprintf("Client-Side Path Traversal via %s", df.Param),
+						Payload:  df.Payload,
+						Evidence: df.Sink + " (URL: " + df.URL + ")",
+						OWASP:    "A01:2021 Broken Access Control", CWE: "CWE-22",
+					})
+				}
+			}
+
+			// postMessage handlers (per target, not per param)
+			for _, t := range scanTargets {
+				for _, df := range scanner.ScanPostMessage(t) {
+					sev := "medium"
+					conf := "low"
+					if df.Executed {
+						sev = "high"
+						conf = "high"
+					}
+					allFindings = append(allFindings, &vulns.Finding{
+						Module: "postmsg", Severity: sev, Confidence: conf,
+						Title:    fmt.Sprintf("postMessage without origin validation (%s)", df.Sink),
+						Payload:  df.Payload,
+						Evidence: "URL: " + df.URL,
+						OWASP:    "A08:2021 Software and Data Integrity Failures", CWE: "CWE-346",
+					})
+				}
 			}
 		}
 	}
