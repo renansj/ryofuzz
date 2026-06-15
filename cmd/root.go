@@ -130,6 +130,7 @@ var (
 	proxyMode bool
 	proxyPort int
 	proxyCA   string
+	proxyEndpoints string
 )
 
 var rootCmd = &cobra.Command{
@@ -240,6 +241,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&proxyMode, "proxy-mode", false, "Start in live proxy fuzzing mode (MITM intercept + scan)")
 	rootCmd.Flags().IntVar(&proxyPort, "proxy-port", 8081, "Proxy listen port")
 	rootCmd.Flags().StringVar(&proxyCA, "proxy-ca", "ryofuzz-ca.pem", "Path to export CA cert for browser trust")
+	rootCmd.Flags().StringVar(&proxyEndpoints, "proxy-endpoints", "ryofuzz-endpoints.json", "Path to export discovered endpoints as OpenAPI spec")
 }
 
 func Execute() error {
@@ -253,6 +255,22 @@ func run(cmd *cobra.Command, args []string) error {
 	// --- Proxy mode ---
 	if proxyMode {
 		return runProxyMode()
+	}
+
+	// --- OpenAPI Import (runs before target check so it can supply targets) ---
+	if openAPIURL != "" {
+		spec, err := schema.LoadFromURL(openAPIURL)
+		if err != nil {
+			fmt.Printf("[-] Failed to load OpenAPI: %v\n", err)
+		} else {
+			oaTargets := schema.ExtractTargets(spec, targetURL)
+			fmt.Printf("[+] OpenAPI: discovered %d endpoints\n", len(oaTargets))
+			if len(oaTargets) > 0 && targetURL == "" {
+				targetURL = oaTargets[0].URL
+				method = oaTargets[0].Method
+				body = oaTargets[0].Body
+			}
+		}
 	}
 
 	// Multi-target: read from stdin if -u not provided
@@ -332,22 +350,6 @@ func run(cmd *cobra.Command, args []string) error {
 			fmt.Println("[*] No race condition detected (responses uniform)")
 		}
 		return nil
-	}
-
-	// --- OpenAPI Import ---
-	if openAPIURL != "" {
-		spec, err := schema.LoadFromURL(openAPIURL)
-		if err != nil {
-			fmt.Printf("[-] Failed to load OpenAPI: %v\n", err)
-		} else {
-			oaTargets := schema.ExtractTargets(spec, targetURL)
-			fmt.Printf("[+] OpenAPI: discovered %d endpoints\n", len(oaTargets))
-			if len(oaTargets) > 0 && targetURL == "" {
-				targetURL = oaTargets[0].URL
-				method = oaTargets[0].Method
-				body = oaTargets[0].Body
-			}
-		}
 	}
 
 	// --- Logger ---
@@ -1132,9 +1134,9 @@ func runProxyMode() error {
 	fmt.Println("")
 	fmt.Println("  Configure your browser proxy to: 127.0.0.1:" + fmt.Sprint(proxyPort))
 	fmt.Printf("  Install %s as a trusted CA in your browser/OS\n", proxyCA)
-	fmt.Println("  Then browse normally. Findings will stream below.")
+	fmt.Println("  Then browse normally. Findings stream below, endpoints are mapped passively.")
 	fmt.Println("")
-	fmt.Println("[*] Press Ctrl+C to stop and show summary.")
+	fmt.Println("[*] Press Ctrl+C to stop, show summary, and export endpoint spec.")
 	fmt.Println("")
 
 	// Signal handling
@@ -1150,6 +1152,17 @@ func runProxyMode() error {
 
 	<-sig
 	fmt.Println("\n[*] Shutting down proxy...")
+
+	// Export discovered endpoints as OpenAPI spec for reuse
+	epCount := p.EndpointCount()
+	if epCount > 0 && proxyEndpoints != "" {
+		if err := p.ExportEndpoints(proxyEndpoints); err != nil {
+			fmt.Printf("[-] Failed to export endpoints: %v\n", err)
+		} else {
+			fmt.Printf("[+] Mapped %d endpoints, exported to: %s\n", epCount, proxyEndpoints)
+			fmt.Printf("    Reuse with: ryofuzz --openapi %s -t all\n", proxyEndpoints)
+		}
+	}
 
 	findings := p.Findings()
 	reporter.Report(findings, format, outputFile, verbose)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -56,12 +57,25 @@ type Target struct {
 
 // LoadFromURL fetches and parses an OpenAPI spec
 func LoadFromURL(specURL string) (*OpenAPISpec, error) {
-	resp, err := http.Get(specURL)
-	if err != nil {
-		return nil, err
+	var data []byte
+
+	// Support local file paths (e.g. recon spec from proxy mode) and file:// URLs
+	if !strings.HasPrefix(specURL, "http://") && !strings.HasPrefix(specURL, "https://") {
+		path := strings.TrimPrefix(specURL, "file://")
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read spec file: %w", err)
+		}
+		data = b
+	} else {
+		resp, err := http.Get(specURL)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		data, _ = io.ReadAll(resp.Body)
 	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
+
 	var spec OpenAPISpec
 	if err := json.Unmarshal(data, &spec); err != nil {
 		return nil, fmt.Errorf("failed to parse OpenAPI spec: %w", err)

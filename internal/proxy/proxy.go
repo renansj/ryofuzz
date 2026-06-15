@@ -38,6 +38,8 @@ type Proxy struct {
 	certCache   map[string]*tls.Certificate
 	certCacheMu sync.Mutex
 
+	recorder *EndpointRecorder
+
 	OnFinding func(*vulns.Finding)
 }
 
@@ -73,6 +75,7 @@ func NewProxy(addr string) (*Proxy, error) {
 		caPEM:      caPEM,
 		seen:       make(map[string]bool),
 		certCache:  make(map[string]*tls.Certificate),
+		recorder:   NewEndpointRecorder(),
 	}, nil
 }
 
@@ -88,6 +91,16 @@ func (p *Proxy) Findings() []*vulns.Finding {
 	cp := make([]*vulns.Finding, len(p.findings))
 	copy(cp, p.findings)
 	return cp
+}
+
+// ExportEndpoints writes the discovered endpoints as an OpenAPI 3.0 spec.
+func (p *Proxy) ExportEndpoints(path string) error {
+	return p.recorder.ExportOpenAPI(path)
+}
+
+// EndpointCount returns how many distinct endpoints were observed.
+func (p *Proxy) EndpointCount() int {
+	return p.recorder.Count()
 }
 
 // Start begins listening.
@@ -182,6 +195,9 @@ func (p *Proxy) proxyAndFuzz(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
+
+	// Record endpoint for recon spec (passive, always on)
+	p.recorder.Record(r, bodyBytes, resp.StatusCode)
 
 	// Write response back
 	for k, vv := range resp.Header {
