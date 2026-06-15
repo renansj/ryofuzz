@@ -9,10 +9,12 @@ import (
 	"github.com/renansj/ryofuzz/internal/analyzer"
 	"github.com/renansj/ryofuzz/internal/auth"
 	"github.com/renansj/ryofuzz/internal/behavioral"
+	"github.com/renansj/ryofuzz/internal/confirm"
 	"github.com/renansj/ryofuzz/internal/crawler"
 	"github.com/renansj/ryofuzz/internal/engine"
 	"github.com/renansj/ryofuzz/internal/fuzzer"
 	"github.com/renansj/ryofuzz/internal/input"
+	"github.com/renansj/ryofuzz/internal/logger"
 	"github.com/renansj/ryofuzz/internal/mutator"
 	"github.com/renansj/ryofuzz/internal/nuclei"
 	"github.com/renansj/ryofuzz/internal/oob"
@@ -75,6 +77,9 @@ var (
 	nucleiDir      string
 	nucleiTags     string
 	nucleiSeverity string
+
+	// Logging
+	logFile string
 )
 
 var rootCmd = &cobra.Command{
@@ -148,6 +153,9 @@ func init() {
 	rootCmd.Flags().StringVar(&nucleiTags, "nuclei-tags", "", "Filter nuclei templates by tags (comma-separated)")
 	rootCmd.Flags().StringVar(&nucleiSeverity, "nuclei-severity", "critical,high", "Filter nuclei templates by severity")
 
+	// Logging
+	rootCmd.Flags().StringVar(&logFile, "log-file", ".ryofuzz-log.jsonl", "Path for request/response JSONL log")
+
 	rootCmd.MarkFlagRequired("url")
 }
 
@@ -158,6 +166,14 @@ func Execute() error {
 func run(cmd *cobra.Command, args []string) error {
 	startTime := time.Now()
 	banner()
+
+	// --- Logger ---
+	scanLog, err := logger.NewScanLogger(logFile)
+	if err != nil {
+		fmt.Printf("[-] Failed to open log file: %v\n", err)
+	} else {
+		defer scanLog.Close()
+	}
 
 	// --- OOB Server ---
 	var oobManager *oob.Manager
@@ -520,6 +536,24 @@ func run(cmd *cobra.Command, args []string) error {
 		results := engine.Fuzz(cfg, points, allPayloads, concurrency, delay, rateLimit, verbose)
 		totalRequests += len(results)
 
+		// Log all requests/responses
+		if scanLog != nil {
+			for _, r := range results {
+				scanLog.Log(logger.LogEntry{
+					Timestamp:      time.Now(),
+					Method:         cfg.Method,
+					URL:            cfg.URL,
+					Body:           cfg.Body,
+					ResponseStatus: r.Response.StatusCode,
+					ResponseBody:   r.Response.Body,
+					TimeMs:         r.Response.TimeMs,
+					Payload:        r.Payload.Value,
+					Module:         r.Payload.Module,
+					Point:          r.Payload.Point.Name,
+				})
+			}
+		}
+
 		// Module-based analysis (pattern matching)
 		findings := analyzer.Analyze(baseline, results, append(modules, cveProbe))
 
@@ -544,6 +578,29 @@ func run(cmd *cobra.Command, args []string) error {
 
 		// Filter false positives (echoed payloads in error responses)
 		findings = analyzer.FilterFalsePositives(baseline, findings, results)
+
+		// Statistical blind injection confirmation pass
+		confirmer := confirm.NewBlindConfirmer(cfg)
+		var confirmed []*vulns.Finding
+		for _, f := range findings {
+			if strings.Contains(f.Title, "Time-based") {
+				p := mutator.Payload{Value: f.Payload, Point: f.Point, Module: f.Module}
+				ok, _ := confirmer.ConfirmTimeBased(cfg, p, 5)
+				if !ok {
+					continue
+				}
+			} else if strings.Contains(f.Title, "Boolean") {
+				trueP := mutator.Payload{Value: f.Payload, Point: f.Point, Module: f.Module}
+				falseV := strings.Replace(f.Payload, "OR 1=1", "OR 1=2", 1)
+				falseV = strings.Replace(falseV, "or 1=1", "or 1=2", 1)
+				falseP := mutator.Payload{Value: falseV, Point: f.Point, Module: f.Module}
+				if !confirmer.ConfirmBoolean(cfg, trueP, falseP) {
+					continue
+				}
+			}
+			confirmed = append(confirmed, f)
+		}
+		findings = confirmed
 
 		allFindings = append(allFindings, findings...)
 	}

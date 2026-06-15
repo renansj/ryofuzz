@@ -4,9 +4,11 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"math/rand"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -477,7 +479,51 @@ func (f *CoverageGuidedFuzzer) responseFingerprint(resp ResponseInfo) string {
 		timeBucket = 5
 	}
 
-	return fmt.Sprintf("%d|%d|%d|%s", resp.StatusCode, sizeBucket, timeBucket, resp.ErrorClass)
+	// Simhash of normalized body for structural similarity
+	sh := simhash(normalizeBody(resp.BodyHash))
+	top8 := sh >> 56
+
+	return fmt.Sprintf("%d|%d|%d|%s|%02x", resp.StatusCode, sizeBucket, timeBucket, resp.ErrorClass, top8)
+}
+
+var (
+	reUUID      = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
+	reISO8601   = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}`)
+	reUnixTS    = regexp.MustCompile(`\b1[0-9]{9}\b`)
+	reCSRF      = regexp.MustCompile(`name="_token"\s+value="[^"]*"`)
+	reHex32     = regexp.MustCompile(`[0-9a-fA-F]{32,}`)
+)
+
+func normalizeBody(body string) string {
+	body = reUUID.ReplaceAllString(body, "")
+	body = reISO8601.ReplaceAllString(body, "")
+	body = reUnixTS.ReplaceAllString(body, "")
+	body = reCSRF.ReplaceAllString(body, "")
+	body = reHex32.ReplaceAllString(body, "")
+	return body
+}
+
+func simhash(text string) uint64 {
+	var v [64]int
+	for i := 0; i+3 <= len(text); i++ {
+		h := fnv.New64a()
+		h.Write([]byte(text[i : i+3]))
+		hash := h.Sum64()
+		for bit := 0; bit < 64; bit++ {
+			if hash&(1<<uint(bit)) != 0 {
+				v[bit]++
+			} else {
+				v[bit]--
+			}
+		}
+	}
+	var result uint64
+	for bit := 0; bit < 64; bit++ {
+		if v[bit] > 0 {
+			result |= 1 << uint(bit)
+		}
+	}
+	return result
 }
 
 func (f *CoverageGuidedFuzzer) buildRequest(value string, point input.InjectionPoint) *http.Request {
