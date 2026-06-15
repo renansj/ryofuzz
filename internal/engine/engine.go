@@ -143,6 +143,11 @@ func sendFuzzedWith(client *http.Client, cfg Config, payload mutator.Payload, ve
 		return sendMultipart(client, cfg, payload)
 	}
 
+	// Host-level raw path probe (e.g. infoleak: GET scheme://host/.git/config)
+	if payload.Metadata != nil && payload.Metadata["rawpath"] != "" {
+		return sendRawPath(client, cfg, payload)
+	}
+
 	// Construir request com payload injetado
 	fuzzedURL := cfg.URL
 	fuzzedBody := cfg.Body
@@ -249,6 +254,53 @@ func sendMultipart(client *http.Client, cfg Config, payload mutator.Payload) Fuz
 		return FuzzResult{Payload: payload, Point: payload.Point, Error: err}
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
+	for _, h := range cfg.Headers {
+		if parts := strings.SplitN(h, ":", 2); len(parts) == 2 {
+			req.Header.Set(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+		}
+	}
+	if cfg.Cookies != "" {
+		req.Header.Set("Cookie", cfg.Cookies)
+	}
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	elapsed := time.Since(start).Milliseconds()
+	if err != nil {
+		return FuzzResult{Payload: payload, Point: payload.Point, Error: err}
+	}
+	defer resp.Body.Close()
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	return FuzzResult{
+		Payload: payload,
+		Point:   payload.Point,
+		Response: Response{
+			StatusCode:  resp.StatusCode,
+			Status:      resp.Status,
+			Headers:     resp.Header,
+			Body:        string(bodyBytes),
+			BodyLength:  len(bodyBytes),
+			TimeMs:      elapsed,
+			ContentType: resp.Header.Get("Content-Type"),
+		},
+	}
+}
+
+// sendRawPath issues a GET to scheme://host + rawpath, ignoring the original
+// URL path/query. Used for host-level checks like sensitive file disclosure.
+func sendRawPath(client *http.Client, cfg Config, payload mutator.Payload) FuzzResult {
+	base, err := url.Parse(cfg.URL)
+	if err != nil {
+		return FuzzResult{Payload: payload, Point: payload.Point, Error: err}
+	}
+	rawpath := payload.Metadata["rawpath"]
+	target := base.Scheme + "://" + base.Host + rawpath
+
+	req, err := http.NewRequest("GET", target, nil)
+	if err != nil {
+		return FuzzResult{Payload: payload, Point: payload.Point, Error: err}
+	}
 	for _, h := range cfg.Headers {
 		if parts := strings.SplitN(h, ":", 2); len(parts) == 2 {
 			req.Header.Set(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))

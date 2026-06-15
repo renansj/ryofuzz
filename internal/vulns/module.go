@@ -70,6 +70,8 @@ func Select(tests []string) []VulnModule {
 		&EmailInjectModule{},
 		&XSSIModule{},
 		&ELInjectModule{},
+		&InfoLeakModule{},
+		&CSRFModule{},
 	}
 
 	if len(tests) == 1 && tests[0] == "all" {
