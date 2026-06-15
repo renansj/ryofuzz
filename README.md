@@ -336,7 +336,7 @@ Auto-refreshes when session expires (detects 401/403).
 
 ### Nuclei template compatibility
 
-Runs nuclei community templates natively. 10,000+ templates for known CVEs.
+Runs nuclei community templates natively with an extended engine.
 
 ```bash
 # Setup (once)
@@ -350,6 +350,33 @@ ryofuzz -u "http://target" -t all --nuclei-templates ~/nuclei-templates/http/ --
 
 # Filter by tags
 ryofuzz -u "http://target" -t all --nuclei-templates ~/nuclei-templates/http/ --nuclei-tags rce,ssrf,lfi
+
+# List templates skipped for unsupported features (honesty over false coverage)
+ryofuzz -u "http://target" --nuclei-templates ~/nuclei-templates/http/ --nuclei-report-skipped
+```
+
+Engine capabilities:
+
+- Matchers: word, regex, status, size, binary, dsl, xpath, with case-insensitive, match-all, and/or conditions, negative, internal, and parts body/header/all/raw/status
+- Extractors: regex (with group), kval, json (gjson), xpath, dsl, with internal dynamic variables that flow into later requests
+- DSL engine: expr-lang backed, ~45 helper functions (contains, regex, md5/sha1/sha256, hmac, base64, hex, url encode/decode, rand_*, compare_versions, mmh3, etc.) plus response variables (status_code, body, header, duration)
+- Interpolation: {{BaseURL}}, {{Hostname}}, {{Host}}, {{Port}}, {{Path}}, {{Scheme}}, preprocessors ({{randstr}}), template variables block, and DSL inside {{...}}
+- Raw HTTP requests with byte fidelity and multi-step requests with extracted-variable propagation
+- Attack modes: batteringram, pitchfork, clusterbomb payload permutations
+- Interactsh: {{interactsh-url}} wired to the built-in OOB server (HTTP + DNS) with interactsh_protocol matcher correlation
+- Classification: cve-id, cwe-id, cvss-score mapped into findings
+
+Honesty (G9): templates using unsupported features (code, javascript, flow, headless, dns/tcp/ssl/file protocols, or unimplemented DSL functions) are skipped loudly, never half-evaluated into a possibly-wrong match. Use `--nuclei-report-skipped` to list them or `--nuclei-strict` to surface them as info findings.
+
+Verified compatibility (against the official nuclei-templates corpus, 13082 templates): 98.3% parse without error, ~90% of HTTP templates fully supported. Run the harness yourself:
+
+```bash
+# parse-rate and supported-feature report
+RYOFUZZ_TEMPLATES=~/nuclei-templates go test ./internal/nuclei/ -run TestParseRate -v
+
+# differential vs the real nuclei binary (same target + templates, diff verdicts)
+RYOFUZZ_DIFF_TARGET=http://target RYOFUZZ_DIFF_TEMPLATES=~/nuclei-templates/http/misconfiguration \
+  go test ./internal/nuclei/ -run TestDifferentialVsNuclei -v
 ```
 
 ### Plugin system
@@ -457,6 +484,8 @@ Nuclei:
       --nuclei-templates string   Path to nuclei-templates directory
       --nuclei-tags string        Filter by tags (comma-separated)
       --nuclei-severity string    Filter by severity (default "critical,high")
+      --nuclei-strict             Surface skipped (unsupported) templates as info findings
+      --nuclei-report-skipped     List templates skipped for unsupported features
 
 Advanced:
       --openapi string             URL to OpenAPI/Swagger spec for endpoint discovery
