@@ -27,6 +27,7 @@ import (
 	"github.com/renansj/ryofuzz/internal/schema"
 	"github.com/renansj/ryofuzz/internal/taint"
 	"github.com/renansj/ryofuzz/internal/vulns"
+	"github.com/renansj/ryofuzz/internal/waf"
 	"github.com/spf13/cobra"
 )
 
@@ -95,6 +96,14 @@ var (
 
 	// OpenAPI
 	openAPIURL string
+)
+
+var (
+	// OOB DNS
+	oobDNS int
+
+	// WAF evasion
+	wafEvade bool
 )
 
 var rootCmd = &cobra.Command{
@@ -180,6 +189,12 @@ func init() {
 
 	// OpenAPI
 	rootCmd.Flags().StringVar(&openAPIURL, "openapi", "", "URL to OpenAPI/Swagger spec for endpoint discovery")
+
+	// OOB DNS
+	rootCmd.Flags().IntVar(&oobDNS, "oob-dns", 0, "UDP port for DNS OOB listener (0=disabled)")
+
+	// WAF evasion
+	rootCmd.Flags().BoolVar(&wafEvade, "waf-evade", false, "Adaptive WAF evasion: retry blocked payloads with encoding chains")
 }
 
 func Execute() error {
@@ -233,9 +248,10 @@ func run(cmd *cobra.Command, args []string) error {
 	if oobDomain != "" {
 		fmt.Printf("[*] Starting OOB callback server (mode=%s)...\n", oobMode)
 		oobCfg := oob.Config{
-			Listen: fmt.Sprintf(":%d", oobListen),
-			Domain: oobDomain,
-			Mode:   oobMode,
+			Listen:  fmt.Sprintf(":%d", oobListen),
+			Domain:  oobDomain,
+			Mode:    oobMode,
+			DNSPort: oobDNS,
 		}
 		oobManager = oob.NewManager(oobCfg)
 		if err := oobManager.Start(); err != nil {
@@ -547,6 +563,16 @@ func run(cmd *cobra.Command, args []string) error {
 				allPayloads = append(allPayloads, mutator.Payload{
 					Value: oobURL2 + "/api/internal", Point: point, Module: "ssrf", Variant: "oob-callback-path",
 				})
+				// DNS-based OOB payloads for blind SSRF/XXE
+				if oobDNS > 0 {
+					dnsHost := oobManager.GenerateDNSToken("ssrf-dns", "ssrf", point.Name)
+					allPayloads = append(allPayloads, mutator.Payload{
+						Value: dnsHost, Point: point, Module: "ssrf", Variant: "oob-dns",
+					})
+					allPayloads = append(allPayloads, mutator.Payload{
+						Value: "http://" + dnsHost + "/", Point: point, Module: "ssrf", Variant: "oob-dns-url",
+					})
+				}
 			}
 		}
 
@@ -631,6 +657,31 @@ func run(cmd *cobra.Command, args []string) error {
 
 		// Filter false positives (echoed payloads in error responses)
 		findings = analyzer.FilterFalsePositives(baseline, findings, results)
+
+		// WAF evasion: retry blocked payloads with encoding chains
+		if wafEvade {
+			var evasionFindings []*vulns.Finding
+			for _, r := range results {
+				if waf.IsBlocked(r.Response.StatusCode) {
+					variants := waf.EvasionVariants(r.Payload.Value)
+					for _, v := range variants {
+						evPayloads := []mutator.Payload{{
+							Value: v, Point: r.Payload.Point, Module: r.Payload.Module, Variant: "waf-evade",
+						}}
+						evResults := engine.Fuzz(cfg, points, evPayloads, 1, delay, rateLimit, false)
+						totalRequests += len(evResults)
+						for _, er := range evResults {
+							if !waf.IsBlocked(er.Response.StatusCode) {
+								evFindings := analyzer.Analyze(baseline, evResults, vulns.Select(parseTests(tests)))
+								evasionFindings = append(evasionFindings, evFindings...)
+								break
+							}
+						}
+					}
+				}
+			}
+			findings = append(findings, evasionFindings...)
+		}
 
 		// Statistical blind injection confirmation pass
 		confirmer := confirm.NewBlindConfirmer(cfg)

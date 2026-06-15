@@ -37,9 +37,10 @@ type TokenInfo struct {
 
 // Config holds OOB server configuration.
 type Config struct {
-	Listen string // listen address (default ":8888")
-	Domain string // external domain/IP
-	Mode   string // local, ngrok, private
+	Listen  string // listen address (default ":8888")
+	Domain  string // external domain/IP
+	Mode    string // local, ngrok, private
+	DNSPort int    // UDP port for DNS listener (0 = disabled)
 }
 
 // Manager manages OOB token generation, serving, and callback correlation.
@@ -49,6 +50,7 @@ type Manager struct {
 	tokens    map[string]*TokenInfo
 	callbacks []OOBCallback
 	server    *http.Server
+	dnsServer *DNSServer
 	domain    string // resolved external domain (may differ from cfg.Domain for ngrok)
 }
 
@@ -84,6 +86,15 @@ func (m *Manager) Start() error {
 	}
 
 	go m.server.ListenAndServe()
+
+	// Start DNS listener if configured
+	if m.cfg.DNSPort > 0 {
+		m.dnsServer = NewDNSServer(m.cfg.DNSPort, m.domain, m)
+		if err := m.dnsServer.Start(); err != nil {
+			return fmt.Errorf("DNS OOB listener failed: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -93,6 +104,9 @@ func (m *Manager) Stop() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		m.server.Shutdown(ctx)
+	}
+	if m.dnsServer != nil {
+		m.dnsServer.Stop()
 	}
 }
 
@@ -117,6 +131,12 @@ func (m *Manager) GenerateToken(payload, module, point string) string {
 func (m *Manager) GenerateURL(payload, module, point string) string {
 	token := m.GenerateToken(payload, module, point)
 	return fmt.Sprintf("http://%s/t/%s", m.domain, token)
+}
+
+// GenerateDNSToken creates a hostname token.domain for DNS-based OOB detection.
+func (m *Manager) GenerateDNSToken(payload, module, point string) string {
+	token := m.GenerateToken(payload, module, point)
+	return fmt.Sprintf("%s.%s", token, m.domain)
 }
 
 // GetCallbacks returns all received callbacks.
