@@ -27,40 +27,47 @@ func (m *SSRFModule) GeneratePayloads(points []input.InjectionPoint, mode string
 func (m *SSRFModule) Detect(payload mutator.Payload, baseBody string, baseStatus int, baseTime int64,
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
 
-	// Detecção de metadata AWS
+	// Detecção de metadata AWS: usar apenas indicadores de CONTEUDO real da
+	// resposta de metadata (que nao aparecem em payloads), nao fragmentos de URL
+	// como "iam"/"meta-data" que sao apenas o payload ecoado.
 	awsIndicators := []string{
-		"iam", "security-credentials", "ami-id", "instance-id",
-		"AccessKeyId", "SecretAccessKey", "Token", "meta-data",
+		"AccessKeyId", "SecretAccessKey", "InstanceProfileArn",
+		"ami-id", "instance-id", "instance-action", "accountId",
+		"\"Code\" : \"Success\"",
+		// GCP metadata content
+		"project-id", "numeric-project-id", "Metadata-Flavor", "service-accounts/default",
+		// Azure IMDS content
+		"\"compute\"", "\"azEnvironment\"", "vmId", "subscriptionId",
 	}
 	for _, ind := range awsIndicators {
-		if strings.Contains(respBody, ind) && !strings.Contains(baseBody, ind) {
+		if indicatorConfirmed(respBody, baseBody, payload.Value, ind) {
 			return &Finding{
 				Module:      "ssrf",
 				Severity:    "critical",
 				Confidence:  "confirmed",
 				Title:       "SSRF - AWS Metadata acessado",
-				Description: "Server accessed AWS metadata service (169.254.169.254)",
+				Description: "Server returned AWS metadata content (169.254.169.254)",
 				Payload:     payload.Value,
 				Point:       payload.Point,
-				Evidence:    "AWS indicator '" + ind + "' found in response",
+				Evidence:    "AWS metadata indicator '" + ind + "' found in response (not echoed payload)",
 				OWASP:       "A10:2021 SSRF",
 				CWE:         "CWE-918",
 			}
 		}
 	}
 
-	// Detecção de conteúdo interno
+	// Detecção de conteúdo interno (guarda contra payload ecoado)
 	internalIndicators := []string{
-		"root:x:0:0", "localhost", "127.0.0.1",
-		"internal server", "connection refused", "no route to host",
-		"private", "intranet",
+		"root:x:0:0", "connection refused", "no route to host",
+		"internal server error occurred",
 	}
 	for _, ind := range internalIndicators {
-		if strings.Contains(strings.ToLower(respBody), ind) && !strings.Contains(strings.ToLower(baseBody), ind) {
+		if indicatorConfirmed(respBody, baseBody, payload.Value, ind) {
 			// Only flag if the payload actually targets internal resources
 			if !strings.Contains(payload.Variant, "internal") && !strings.Contains(payload.Variant, "bypass") &&
 				!strings.Contains(payload.Variant, "localhost") && !strings.Contains(payload.Value, "127.") &&
-				!strings.Contains(payload.Value, "localhost") && !strings.Contains(payload.Value, "0.0.0.0") {
+				!strings.Contains(payload.Value, "localhost") && !strings.Contains(payload.Value, "0.0.0.0") &&
+				!strings.Contains(payload.Value, "[::]") {
 				continue
 			}
 			sev := "high"
@@ -72,7 +79,7 @@ func (m *SSRFModule) Detect(payload mutator.Payload, baseBody string, baseStatus
 				Severity:    sev,
 				Confidence:  "high",
 				Title:       "SSRF - Acesso a recurso interno",
-				Description: "Server accessed internal/localhost resource",
+				Description: "Server attempted to access an internal/localhost resource",
 				Payload:     payload.Value,
 				Point:       payload.Point,
 				Evidence:    "Indicator '" + ind + "' in response",

@@ -144,7 +144,7 @@ func (m *XSLTModule) Detect(payload mutator.Payload, baseBody string, baseStatus
 	}
 	low := respBody
 	for ind, desc := range indicators {
-		if strings.Contains(low, ind) && !strings.Contains(baseBody, ind) {
+		if indicatorConfirmed(low, baseBody, payload.Value, ind) {
 			sev := "high"
 			if ind == "root:x:0:0" {
 				sev = "critical"

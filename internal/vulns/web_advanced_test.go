@@ -740,11 +740,18 @@ func TestHPPDetect(t *testing.T) {
 		wantNil    bool
 	}{
 		{
-			"TP status code change",
+			"TP status code change (non-error)",
 			mutator.Payload{Value: "test&search=hpp_test", Point: pt, Module: "hpp", Variant: "duplicate-param", Metadata: map[string]string{"original": "test", "param_name": "search"}},
 			"results for test",
+			"forbidden",
+			200, 403, false,
+		},
+		{
+			"FP server error from malformed value not flagged",
+			mutator.Payload{Value: "test&search=hpp_test", Point: pt, Module: "hpp", Variant: "duplicate-param", Metadata: map[string]string{"original": "test", "param_name": "search"}},
 			"results for test",
-			200, 500, false,
+			"internal server error",
+			200, 500, true,
 		},
 		{
 			"TP second value reflected",

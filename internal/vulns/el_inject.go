@@ -85,18 +85,18 @@ func (m *ELInjectModule) Detect(payload mutator.Payload, baseBody string, baseSt
 		}
 	}
 
-	// Check for Java class/runtime reflection output
+	// Check for Java class/runtime reflection output (guard against echoed payload)
 	if strings.Contains(payload.Variant, "runtime") || strings.Contains(payload.Variant, "exec") ||
 		strings.Contains(payload.Variant, "env") || strings.Contains(payload.Variant, "class") {
-		indicators := []string{"java.lang.Runtime", "java.lang.Process", "uid=", "PATH=", "HOME="}
+		indicators := []string{"java.lang.Runtime@", "java.lang.Process@", "uid=", "PATH=", "HOME="}
 		for _, ind := range indicators {
-			if strings.Contains(respBody, ind) && !strings.Contains(baseBody, ind) {
+			if indicatorConfirmed(respBody, baseBody, payload.Value, ind) {
 				return &Finding{
 					Module:      "el",
 					Severity:    "critical",
 					Confidence:  "confirmed",
 					Title:       "Expression Language Injection - Code execution",
-					Description: "Java runtime class or system output detected in response",
+					Description: "Java runtime class or system output detected in response (not echoed payload)",
 					Payload:     payload.Value,
 					Point:       payload.Point,
 					Evidence:    "Java indicator '" + ind + "' found in response",

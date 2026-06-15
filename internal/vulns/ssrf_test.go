@@ -81,10 +81,10 @@ func TestSSRFDetect_Extended(t *testing.T) {
 			wantNil: false,
 		},
 		{
-			name:    "TP bypass variant with private keyword",
+			name:    "TP bypass variant with connection refused",
 			payload: mutator.Payload{Value: "http://0x7f000001/", Point: pt, Module: "ssrf", Variant: "bypass-hex-localhost"},
 			base:    "normal",
-			resp:    "private network data exposed",
+			resp:    "Error: Connection refused while fetching",
 			wantNil: false,
 		},
 		{

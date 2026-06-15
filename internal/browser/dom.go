@@ -143,13 +143,15 @@ func (s *DOMScanner) ScanDOMXSS(targetURL string, params []string) []DOMFinding 
 				})
 			} else {
 				// Check if payload reached innerHTML (DOM sink without execution)
+				// but ONLY on an HTML document. JSON/text responses that merely
+				// contain the canary as data are not DOM XSS.
 				var inDOM bool
 				ctx2, cancel2 := chromedp.NewContext(allocCtx)
 				tCtx2, tCancel2 := context.WithTimeout(ctx2, 10*time.Second)
 				err := chromedp.Run(tCtx2,
 					chromedp.Navigate(testURL),
 					chromedp.Sleep(2*time.Second),
-					chromedp.Evaluate(`document.body.innerHTML.indexOf('RYOXSS') !== -1`, &inDOM),
+					chromedp.Evaluate(`(document.contentType && document.contentType.indexOf('html') !== -1) && document.body && document.body.innerHTML.indexOf('RYOXSS') !== -1`, &inDOM),
 				)
 				tCancel2()
 				cancel2()

@@ -50,14 +50,16 @@ func (m *HPPModule) GeneratePayloads(points []input.InjectionPoint, mode string,
 func (m *HPPModule) Detect(payload mutator.Payload, baseBody string, baseStatus int, baseTime int64,
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
 
-	// Status code change
-	if baseStatus != respStatus && respStatus != 0 {
+	// A jump to a 5xx server error usually means the malformed value broke the
+	// request (e.g. invalid host), not a genuine parameter-pollution behavior.
+	// Only consider non-error status changes.
+	if baseStatus != respStatus && respStatus != 0 && respStatus < 500 && baseStatus < 500 {
 		return &Finding{
 			Module:      "hpp",
-			Severity:    "medium",
-			Confidence:  "medium",
-			Title:       "HTTP Parameter Pollution - Status code change",
-			Description: "Duplicate parameters caused a different server response status",
+			Severity:    "low",
+			Confidence:  "low",
+			Title:       "HTTP Parameter Pollution - Status code change (tentative)",
+			Description: "Duplicate parameters changed the response status. Confirm the server selects a different parameter occurrence.",
 			Payload:     payload.Value,
 			Point:       payload.Point,
 			Evidence:    fmt.Sprintf("Baseline status=%d, response status=%d", baseStatus, respStatus),
@@ -66,29 +68,13 @@ func (m *HPPModule) Detect(payload mutator.Payload, baseBody string, baseStatus 
 		}
 	}
 
-	// Body length difference > 100 bytes
-	lenDiff := len(respBody) - len(baseBody)
-	if lenDiff < 0 {
-		lenDiff = -lenDiff
-	}
-	if lenDiff > 100 {
-		return &Finding{
-			Module:      "hpp",
-			Severity:    "medium",
-			Confidence:  "medium",
-			Title:       "HTTP Parameter Pollution - Response size divergence",
-			Description: "Duplicate parameters caused a significantly different response body size",
-			Payload:     payload.Value,
-			Point:       payload.Point,
-			Evidence:    fmt.Sprintf("Body length diff: %d bytes", lenDiff),
-			OWASP:       "A03:2021",
-			CWE:         "CWE-235",
-		}
-	}
-
-	// Check if second param value is reflected (server uses last occurrence)
-	if strings.Contains(payload.Variant, "duplicate") {
-		if strings.Contains(respBody, "hpp_second") || strings.Contains(respBody, "hpp_test") {
+	// Second occurrence used by the server (true second-param-wins) is the
+	// reliable signal. Require a non-error response and the injected marker
+	// present while NOT being attributable to a full echo of both values.
+	if strings.Contains(payload.Variant, "duplicate") && respStatus < 500 {
+		usesSecond := strings.Contains(respBody, "hpp_second")
+		usesTest := strings.Contains(respBody, "hpp_test") && !strings.Contains(respBody, "hpp_first")
+		if usesSecond || usesTest {
 			return &Finding{
 				Module:      "hpp",
 				Severity:    "medium",
@@ -97,7 +83,7 @@ func (m *HPPModule) Detect(payload mutator.Payload, baseBody string, baseStatus 
 				Description: "Server uses the second occurrence of a duplicated parameter, enabling pollution attacks",
 				Payload:     payload.Value,
 				Point:       payload.Point,
-				Evidence:    "Injected duplicate value reflected in response",
+				Evidence:    "Injected duplicate value reflected as the effective value",
 				OWASP:       "A03:2021",
 				CWE:         "CWE-235",
 			}

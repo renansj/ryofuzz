@@ -29,23 +29,21 @@ func (m *PwResetModule) GeneratePayloads(points []input.InjectionPoint, mode str
 	}
 
 	for _, point := range points {
-		if point.Location == input.LocHeader {
-			name := strings.ToLower(point.Name)
-			if name == "host" || strings.Contains(name, "forward") || strings.Contains(name, "original") {
-				for _, p := range hostPayloads {
-					payloads = append(payloads, mutator.Payload{
-						Value: p.value, Point: point, Module: "pwreset", Variant: p.variant,
-						Metadata: map[string]string{"evil_host": evilHost},
-					})
-				}
-			}
+		// Only inject into host-related headers. Injecting into arbitrary query
+		// params (e.g. a url= param) and then matching the host in an echoed
+		// response is a false positive, not password reset poisoning.
+		if point.Location != input.LocHeader {
+			continue
 		}
-		// Also inject as header values regardless of point type
-		for _, p := range hostPayloads {
-			payloads = append(payloads, mutator.Payload{
-				Value: p.value, Point: point, Module: "pwreset", Variant: p.variant,
-				Metadata: map[string]string{"evil_host": evilHost},
-			})
+		name := strings.ToLower(point.Name)
+		if name == "host" || strings.Contains(name, "forward") || strings.Contains(name, "original") ||
+			strings.Contains(name, "referer") || strings.Contains(name, "true-client") {
+			for _, p := range hostPayloads {
+				payloads = append(payloads, mutator.Payload{
+					Value: p.value, Point: point, Module: "pwreset", Variant: p.variant,
+					Metadata: map[string]string{"evil_host": evilHost},
+				})
+			}
 		}
 	}
 	return payloads
