@@ -34,7 +34,7 @@ Plus capabilities no other open source tool combines in one CLI:
 
 | Capability | Flag | Description |
 |-----------|------|-------------|
-| Live proxy fuzzing | `--proxy-mode` | MITM proxy: browse normally, ryofuzz fuzzes in background |
+| Live proxy fuzzing | `--proxy-mode` | MITM proxy: browse normally, ryofuzz fuzzes + maps endpoints in background |
 | Headless browser | `--browser` | Real DOM XSS detection via chromedp |
 | Single-packet race | `--race-singlepacket N` | HTTP/2 synchronized burst for TOCTOU bugs |
 | Stateful workflows | `--workflow file.yaml` | Multi-step logic flaw fuzzing |
@@ -134,6 +134,28 @@ What it does per request:
 - Deduplicates by endpoint+param so the same thing is not re-fuzzed
 
 Press Ctrl+C to stop. A full findings summary prints on exit.
+
+#### Passive endpoint mapping (recon)
+
+While you browse, the proxy also records every endpoint into an OpenAPI 3.0 specification. On exit it writes the spec to `ryofuzz-endpoints.json` (configurable with `--proxy-endpoints`). The recorder:
+
+- Templatizes dynamic path segments automatically: `/api/users/123` and `/api/users/456` collapse into `/api/users/{id}` (also handles UUIDs and hashes)
+- Captures query parameters with sample values and inferred types
+- Captures custom request headers (filters standard browser noise)
+- Infers JSON and form body field types from observed bodies
+- Records observed response status codes and hit counts per endpoint
+
+The generated spec feeds directly back into targeted fuzzing:
+
+```bash
+# Step 1: browse the app through the proxy to map it
+ryofuzz --proxy-mode --proxy-endpoints app-map.json
+
+# Step 2: fuzz everything that was discovered
+ryofuzz --openapi app-map.json -t all
+```
+
+This turns casual browsing into a reusable attack surface map. The `--openapi` flag accepts both local file paths and HTTP URLs.
 
 ## Vulnerability Modules (38)
 
@@ -405,6 +427,7 @@ Live Proxy:
       --proxy-mode               Start in live proxy fuzzing mode (MITM intercept + scan)
       --proxy-port int           Proxy listen port (default 8081)
       --proxy-ca string          Path to export CA cert for browser trust (default "ryofuzz-ca.pem")
+      --proxy-endpoints string   Path to export discovered endpoints as OpenAPI spec (default "ryofuzz-endpoints.json")
 
 DNS OOB:
       --oob-dns int          UDP port for DNS OOB listener (0=disabled)
@@ -599,7 +622,7 @@ ryofuzz/
 │   ├── authz/diff.go            # Differential authorization testing
 │   ├── workflow/engine.go       # Stateful multi-step workflow fuzzing
 │   ├── race/singlepacket.go     # HTTP/2 single-packet race attack
-│   ├── proxy/proxy.go           # Live MITM proxy fuzzing
+│   ├── proxy/proxy.go           # Live MITM proxy fuzzing + endpoint recon (OpenAPI export)
 │   ├── browser/dom.go           # Headless browser DOM XSS (chromedp)
 │   ├── waf/evasion.go           # WAF fingerprint + adaptive evasion
 │   ├── llm/client.go            # LLM payload gen + triage (Ollama)
@@ -671,6 +694,10 @@ ryofuzz -u "http://target/upload" -d @file.png -t upload
 
 # Live proxy: browse while ryofuzz fuzzes in the background
 ryofuzz --proxy-mode --proxy-port 8081
+
+# Recon workflow: map endpoints by browsing, then fuzz the map
+ryofuzz --proxy-mode --proxy-endpoints app-map.json   # browse, then Ctrl+C
+ryofuzz --openapi app-map.json -t all                 # fuzz everything discovered
 
 # Headless browser DOM XSS
 ryofuzz -u "http://target/page?q=test" --browser
