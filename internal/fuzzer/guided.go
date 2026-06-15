@@ -588,7 +588,7 @@ func (f *CoverageGuidedFuzzer) buildRequest(value string, point input.InjectionP
 		return nil
 	}
 
-	req.Header.Set("User-Agent", "ryofuzz/0.1.0")
+	req.Header.Set("User-Agent", "ryofuzz/1.0.0")
 	if body != "" {
 		if strings.HasPrefix(strings.TrimSpace(body), "{") {
 			req.Header.Set("Content-Type", "application/json")

@@ -115,7 +115,7 @@ func ReportSARIF(findings []*vulns.Finding, outputFile string) error {
 			Tool: sarifTool{
 				Driver: sarifDriver{
 					Name:    "ryofuzz",
-					Version: "0.7.2",
+					Version: "1.0.0",
 					Rules:   rules,
 				},
 			},

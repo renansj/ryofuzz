@@ -1,10 +1,10 @@
 # ryofuzz
 
-Offensive web vulnerability fuzzer. Discovers unknown bugs through behavioral analysis, coverage-guided mutation, and intent mapping.
+Offensive web vulnerability fuzzer. Discovers unknown bugs through behavioral analysis, coverage-guided mutation, intent mapping, and live proxy interception.
 
 ```
   ╔═══════════════════════════════════════════╗
-  ║             ryofuzz v0.4.0                ║
+  ║             ryofuzz v1.0.0                ║
   ║    Offensive Web Vulnerability Fuzzer     ║
   ║    github.com/renansj/ryofuzz             ║
   ╚═══════════════════════════════════════════╝
@@ -17,7 +17,34 @@ Most scanners check for known vulnerabilities. ryofuzz discovers unknown ones.
 - **Behavioral mode**: maps how the server processes input, then attacks the logic gaps
 - **Guided mode**: AFL++-style coverage-guided evolutionary fuzzing for web
 - **Smart mode**: type-aware payload generation with false positive filtering
+- **Live proxy mode**: Burp-style MITM intercept that fuzzes endpoints as you browse
 - **Nuclei compatible**: runs 10,000+ community templates natively
+
+Plus capabilities no other open source tool combines in one CLI:
+- Canary propagation for stored/second-order injection detection
+- Differential authorization testing (auto IDOR/privesc detection)
+- Stateful workflow fuzzing for business logic flaws
+- Single-packet HTTP/2 race attacks
+- Headless browser DOM XSS
+- Chain detection that correlates findings into critical attack paths
+- OOB callbacks via HTTP and DNS
+- Optional LLM-assisted payload generation and triage
+
+## What is new in v1.0.0
+
+| Capability | Flag | Description |
+|-----------|------|-------------|
+| Live proxy fuzzing | `--proxy-mode` | MITM proxy: browse normally, ryofuzz fuzzes in background |
+| Headless browser | `--browser` | Real DOM XSS detection via chromedp |
+| Single-packet race | `--race-singlepacket N` | HTTP/2 synchronized burst for TOCTOU bugs |
+| Stateful workflows | `--workflow file.yaml` | Multi-step logic flaw fuzzing |
+| DNS OOB | `--oob-dns 53` | Capture blind SSRF/XXE via DNS resolution |
+| WAF evasion | `--waf-evade` | Adaptive encoding chains on 403/406 blocks |
+| LLM assist | `--llm ollama:llama3` | Payload generation + false positive triage |
+| Canary taint | `--taint-scan` | Stored/second-order injection detection |
+| Differential authz | `--mode authz` | Auto IDOR/broken-auth/privesc |
+| OpenAPI import | `--openapi URL` | Auto-discover endpoints from spec |
+| SARIF output | `--format sarif` | GitHub Security tab integration |
 
 ## Installation
 
@@ -38,7 +65,7 @@ git clone https://github.com/renansj/ryofuzz.git && cd ryofuzz
 go build -ldflags="-s -w" -o ryofuzz . && sudo mv ryofuzz /usr/local/bin/
 ```
 
-Requires Go 1.22+.
+Requires Go 1.22+. Headless browser mode requires Chromium installed.
 
 ## Modes
 
@@ -81,6 +108,32 @@ ryofuzz -u "http://target/api" -d '{"user":"admin","role":"viewer"}' -t sqli,sst
 ryofuzz -u "http://target/search?q=test" --mode payloads -t xss
 ryofuzz -u "http://target/api" -d '{"data":"test"}' --mode mutate -n 10000
 ```
+
+### Live Proxy (Burp-style intercept)
+
+Starts a MITM proxy. Point your browser at it and browse normally. Every request that passes through is fuzzed lightly in the background, and passive checks run on every response. Findings stream live as you navigate.
+
+```bash
+# Start the proxy (default port 8081)
+ryofuzz --proxy-mode
+
+# Custom port and CA export path
+ryofuzz --proxy-mode --proxy-port 8888 --proxy-ca /tmp/ryofuzz-ca.pem
+```
+
+Setup:
+1. Run the command above. It generates a CA certificate (`ryofuzz-ca.pem`).
+2. Set your browser HTTP/HTTPS proxy to `127.0.0.1:8081`.
+3. Install `ryofuzz-ca.pem` as a trusted CA in your browser or OS (needed for HTTPS interception).
+4. Browse the target application normally.
+
+What it does per request:
+- Forwards transparently so the page loads normally
+- Light active probes per injection point (single quote for SQLi, canary for XSS, 7*7 for SSTI, traversal for LFI)
+- Passive checks: missing security headers (CSP, HSTS, X-Frame-Options), insecure cookie flags, leaked secrets (API keys, JWTs, stack traces)
+- Deduplicates by endpoint+param so the same thing is not re-fuzzed
+
+Press Ctrl+C to stop. A full findings summary prints on exit.
 
 ## Vulnerability Modules (38)
 
@@ -343,12 +396,29 @@ Advanced:
       --taint-scan                 Enable canary propagation for stored/second-order detection
       --authz-identities strings   Identities for authz testing (name:header:value, repeatable)
       --log-file string            Request/response JSONL log path (default ".ryofuzz-log.jsonl")
+      --workflow string            Path to workflow YAML for stateful fuzzing
+      --race-singlepacket int      Single-packet race attack parallel requests (0=disabled)
+      --browser                    Enable headless browser DOM XSS scanning
+      --waf-evade                  Adaptive WAF evasion: retry blocked payloads with encoding chains
+
+Live Proxy:
+      --proxy-mode               Start in live proxy fuzzing mode (MITM intercept + scan)
+      --proxy-port int           Proxy listen port (default 8081)
+      --proxy-ca string          Path to export CA cert for browser trust (default "ryofuzz-ca.pem")
+
+DNS OOB:
+      --oob-dns int          UDP port for DNS OOB listener (0=disabled)
+
+LLM:
+      --llm string           LLM provider spec (e.g. ollama:llama3)
+      --llm-payloads         Use LLM to generate additional payloads
+      --llm-triage           Use LLM to triage findings (filter false positives)
 
 Plugins:
       --plugins-dir string   Custom plugins directory
 
 Other:
-      --proxy string         HTTP proxy (e.g., http://127.0.0.1:8080)
+      --proxy string         HTTP proxy for outbound traffic (e.g., http://127.0.0.1:8080)
 ```
 
 ## Detection quality
@@ -431,6 +501,84 @@ ryofuzz -u "http://target" -t all --format sarif -o results.sarif
 # Upload to GitHub Security tab via github/codeql-action/upload-sarif
 ```
 
+### Headless browser DOM XSS
+
+Launches headless Chromium, hooks `eval`, `alert`, `document.write`, and `innerHTML`, then injects canary payloads into query params and URL fragments. Confirms client-side execution rather than just reflection. Requires Chromium installed.
+
+```bash
+ryofuzz -u "http://target/page?q=test" --browser
+ryofuzz -u "http://target" --crawl --browser
+```
+
+### Single-packet race attack (HTTP/2)
+
+Fires N requests in a synchronized burst so they arrive at the server simultaneously, eliminating network jitter. Detects TOCTOU race conditions that normal concurrency misses: coupon reuse, balance bypass, double-spend.
+
+```bash
+# 20 parallel requests aligned to the same instant
+ryofuzz -u "http://target/api/redeem-coupon" -d '{"code":"SAVE10"}' --race-singlepacket 20
+```
+
+If multiple requests succeed where only one should, a race condition is flagged.
+
+### Stateful workflow fuzzing
+
+Models multi-step flows (login, create, read, delete) and fuzzes the transitions: skipping steps, reordering, replaying non-idempotent operations, manipulating state between steps. Catches business logic flaws that stateless fuzzers never see.
+
+```bash
+ryofuzz --workflow examples/workflow-checkout.yaml
+```
+
+Workflow YAML format:
+
+```yaml
+workflow: checkout
+steps:
+  - name: add_cart
+    request: {method: POST, url: "http://target/cart", body: '{"item":1,"qty":1}'}
+    extract: {cart_id: "cartId\":\"([^\"]+)"}
+  - name: apply_coupon
+    request: {method: POST, url: "http://target/coupon", body: '{"code":"SAVE10"}'}
+    fuzz: [replay_n_times, reorder]
+  - name: checkout
+    request: {method: POST, url: "http://target/checkout", body: '{"cart":"{{cart_id}}"}'}
+    fuzz: [negative_qty]
+    assert_logic: [total_not_negative, qty_positive, status_ok]
+```
+
+State carries across steps via cookie jar and `{{varname}}` substitution from `extract`.
+
+### DNS OOB listener
+
+Captures blind SSRF/XXE that triggers DNS resolution but not HTTP callbacks. Runs a DNS server that correlates lookups by subdomain token.
+
+```bash
+ryofuzz -u "http://target/api" -t ssrf,xxe \
+  --oob 10.10.14.5:8888 --oob-dns 53 --oob-mode private
+```
+
+Requires a domain whose NS points to your listener, or a target that resolves DNS against you.
+
+### Adaptive WAF evasion
+
+Detects the WAF (Cloudflare, AWS WAF, Akamai, ModSecurity, Imperva) from blocking behavior, then retries blocked payloads through encoding chains (double URL encode, unicode, case randomization, inline comments, HTML entities) until one passes.
+
+```bash
+ryofuzz -u "http://target/api?id=1" -t sqli,xss --waf-evade
+```
+
+### LLM-assisted (optional)
+
+Uses a local Ollama model (or compatible API) for contextual payload generation and false positive triage. Degrades gracefully if the model is unavailable.
+
+```bash
+# Generate stack-specific payloads
+ryofuzz -u "http://target/api?id=1" -t all --llm ollama:llama3 --llm-payloads
+
+# Triage findings to reduce false positives
+ryofuzz -u "http://target/api?id=1" -t all --llm ollama:llama3 --llm-triage
+```
+
 ## Architecture
 
 ```
@@ -438,19 +586,32 @@ ryofuzz/
 ├── cmd/root.go                  # CLI orchestration
 ├── internal/
 │   ├── behavioral/engine.go     # Behavioral intent mapping (Phase 1-2-3)
-│   ├── fuzzer/guided.go         # Coverage-guided evolutionary fuzzer
+│   ├── fuzzer/guided.go         # Coverage-guided evolutionary fuzzer (simhash coverage)
 │   ├── input/parser.go          # Injection point auto-detection
-│   ├── engine/engine.go         # Concurrent request engine
+│   ├── engine/engine.go         # Concurrent request engine (pooled client)
 │   ├── mutator/                 # Radamsa-style + smart type-aware mutations
 │   ├── payloads/database.go     # 740+ embedded payloads
-│   ├── vulns/                   # 29 vulnerability modules + CVE probe
+│   ├── vulns/                   # 38 vulnerability modules + CVE probe
 │   ├── analyzer/                # Behavioral clustering + FP filter
+│   ├── confirm/blind.go         # Statistical blind injection confirmation
+│   ├── chain/engine.go          # Finding correlation into attack chains
+│   ├── taint/canary.go          # Canary propagation (stored/second-order)
+│   ├── authz/diff.go            # Differential authorization testing
+│   ├── workflow/engine.go       # Stateful multi-step workflow fuzzing
+│   ├── race/singlepacket.go     # HTTP/2 single-packet race attack
+│   ├── proxy/proxy.go           # Live MITM proxy fuzzing
+│   ├── browser/dom.go           # Headless browser DOM XSS (chromedp)
+│   ├── waf/evasion.go           # WAF fingerprint + adaptive evasion
+│   ├── llm/client.go            # LLM payload gen + triage (Ollama)
+│   ├── schema/openapi.go        # OpenAPI/Swagger import
+│   ├── logger/logger.go         # Full request/response JSONL logging
 │   ├── nuclei/runner.go         # Nuclei template executor
-│   ├── reporter/                # text, json, markdown, html output
-│   ├── oob/                     # OOB callback server
+│   ├── reporter/                # text, json, markdown, html, sarif output
+│   ├── oob/                     # OOB callback server (HTTP + DNS)
 │   ├── auth/                    # Authentication manager
 │   ├── crawler/                 # Web spider + JS parser
 │   └── plugins/                 # YAML plugin loader
+├── examples/                    # Example workflow YAML
 └── plugins/                     # Example custom checks
 ```
 
@@ -507,6 +668,27 @@ ryofuzz -u "http://target/api?id=1" -t all --log-file scan.jsonl
 ryofuzz -u "http://target/account/profile" -t cache-deception
 ryofuzz -u "http://target/oauth/authorize?redirect_uri=http://legit.com/cb" -t oauth
 ryofuzz -u "http://target/upload" -d @file.png -t upload
+
+# Live proxy: browse while ryofuzz fuzzes in the background
+ryofuzz --proxy-mode --proxy-port 8081
+
+# Headless browser DOM XSS
+ryofuzz -u "http://target/page?q=test" --browser
+
+# Single-packet race condition (double-spend, coupon reuse)
+ryofuzz -u "http://target/api/redeem" -d '{"code":"SAVE10"}' --race-singlepacket 20
+
+# Stateful workflow logic flaws
+ryofuzz --workflow examples/workflow-checkout.yaml
+
+# Blind SSRF via DNS exfiltration
+ryofuzz -u "http://target/api" -t ssrf,xxe --oob 10.10.14.5:8888 --oob-dns 53 --oob-mode private
+
+# Adaptive WAF evasion
+ryofuzz -u "http://target/api?id=1" -t sqli,xss --waf-evade
+
+# LLM-assisted payloads + triage (local Ollama)
+ryofuzz -u "http://target/api?id=1" -t all --llm ollama:llama3 --llm-payloads --llm-triage
 ```
 
 ## Disclaimer

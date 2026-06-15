@@ -1043,7 +1043,7 @@ doReport:
 			StartTime:     startTime,
 			Duration:      duration,
 			TotalRequests: totalRequests,
-			Version:       "0.1.0",
+			Version:       "1.0.0",
 		}
 		outFile := outputFile
 		if outFile == "" {
@@ -1074,7 +1074,7 @@ doReport:
 func banner() {
 	fmt.Println(`
   ╔═══════════════════════════════════════════╗
-  ║             ryofuzz v0.7.2                ║
+  ║             ryofuzz v1.0.0                ║
   ║    Offensive Web Vulnerability Fuzzer     ║
   ║    github.com/renansj/ryofuzz             ║
   ╚═══════════════════════════════════════════╝`)

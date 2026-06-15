@@ -243,7 +243,7 @@ func buildRequest(cfg Config) (*http.Request, error) {
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", "ryofuzz/0.7.2")
+	req.Header.Set("User-Agent", "ryofuzz/1.0.0")
 
 	// Auto Content-Type
 	if cfg.Body != "" && req.Header.Get("Content-Type") == "" {
