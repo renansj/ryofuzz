@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/renansj/ryofuzz/internal/analyzer"
 	"github.com/renansj/ryofuzz/internal/auth"
 	"github.com/renansj/ryofuzz/internal/behavioral"
+	"github.com/renansj/ryofuzz/internal/chain"
 	"github.com/renansj/ryofuzz/internal/confirm"
 	"github.com/renansj/ryofuzz/internal/crawler"
 	"github.com/renansj/ryofuzz/internal/engine"
@@ -122,7 +124,7 @@ func init() {
 
 	// Output
 	rootCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file")
-	rootCmd.Flags().StringVar(&format, "format", "text", "Format: text, json, markdown, html")
+	rootCmd.Flags().StringVar(&format, "format", "text", "Format: text, json, markdown, html, sarif")
 
 	// OOB callback
 	rootCmd.Flags().StringVar(&oobDomain, "oob", "", "OOB domain/IP for callbacks (SSRF, XXE, blind)")
@@ -156,8 +158,6 @@ func init() {
 
 	// Logging
 	rootCmd.Flags().StringVar(&logFile, "log-file", ".ryofuzz-log.jsonl", "Path for request/response JSONL log")
-
-	rootCmd.MarkFlagRequired("url")
 }
 
 func Execute() error {
@@ -167,6 +167,20 @@ func Execute() error {
 func run(cmd *cobra.Command, args []string) error {
 	startTime := time.Now()
 	banner()
+
+	// Multi-target: read from stdin if -u not provided
+	if targetURL == "" {
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode() & os.ModeCharDevice) == 0 {
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				targetURL = strings.TrimSpace(scanner.Text())
+			}
+		}
+		if targetURL == "" {
+			return fmt.Errorf("target URL required: use -u or pipe via stdin")
+		}
+	}
 
 	// --- Logger ---
 	scanLog, err := logger.NewScanLogger(logFile)
@@ -656,6 +670,10 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 doReport:
+	// --- Chain detection ---
+	chainFindings := chain.Detect(allFindings)
+	allFindings = append(allFindings, chainFindings...)
+
 	// --- Report ---
 	duration := time.Since(startTime)
 	fmt.Printf("\n[+] Findings: %d (in %s, %d requests)\n", len(allFindings), duration.Round(time.Second), totalRequests)
@@ -677,6 +695,16 @@ doReport:
 			fmt.Printf("[-] Failed to generate HTML: %v\n", err)
 		} else {
 			fmt.Printf("[+] HTML report saved: %s\n", outFile)
+		}
+	case "sarif":
+		outFile := outputFile
+		if outFile == "" {
+			outFile = "ryofuzz_report.sarif"
+		}
+		if err := reporter.ReportSARIF(allFindings, outFile); err != nil {
+			fmt.Printf("[-] Failed to generate SARIF: %v\n", err)
+		} else {
+			fmt.Printf("[+] SARIF report saved: %s\n", outFile)
 		}
 	default:
 		reporter.Report(allFindings, format, outputFile, verbose)
