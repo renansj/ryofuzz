@@ -31,10 +31,12 @@ import (
 	"github.com/renansj/ryofuzz/internal/race"
 	"github.com/renansj/ryofuzz/internal/reporter"
 	"github.com/renansj/ryofuzz/internal/schema"
+	"github.com/renansj/ryofuzz/internal/smuggle"
 	"github.com/renansj/ryofuzz/internal/taint"
 	"github.com/renansj/ryofuzz/internal/vulns"
 	"github.com/renansj/ryofuzz/internal/waf"
 	"github.com/renansj/ryofuzz/internal/workflow"
+	"github.com/renansj/ryofuzz/internal/wscheck"
 	"github.com/spf13/cobra"
 )
 
@@ -997,6 +999,60 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// --- CSWSH (Cross-Site WebSocket Hijacking) ---
+	if testSelected("ws") || autoMode {
+		wsURL := wscheck.NormalizeWSURL(targetURL)
+		fmt.Printf("[*] Checking WebSocket Origin validation (CSWSH) on %s...\n", wsURL)
+		hdrMap := map[string]string{}
+		for _, h := range staticAuthHeaders() {
+			if parts := strings.SplitN(h, ":", 2); len(parts) == 2 {
+				hdrMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+			}
+		}
+		if cookies != "" {
+			hdrMap["Cookie"] = cookies
+		}
+		res, err := wscheck.Check(wsURL, hdrMap, time.Duration(timeout)*time.Second)
+		if err == nil && res != nil && res.Accepted {
+			allFindings = append(allFindings, &vulns.Finding{
+				Module:     "ws",
+				Severity:   "high",
+				Confidence: "high",
+				Title:      "Cross-Site WebSocket Hijacking (CSWSH)",
+				Description: "The WebSocket endpoint completed the handshake for a forged cross-origin Origin, indicating no Origin validation.",
+				Payload:    res.ForgedOrigin,
+				Evidence:   res.Detail,
+				OWASP:      "A05:2021 Security Misconfiguration",
+				CWE:        "CWE-346",
+			})
+			fmt.Println("[+] CSWSH: WebSocket accepted forged Origin!")
+		}
+	}
+
+	// --- HTTP Request Smuggling (raw-socket time-based CL.TE / TE.CL) ---
+	if testSelected("smuggling") || autoMode {
+		fmt.Println("[*] Checking HTTP request smuggling (CL.TE / TE.CL, time-based)...")
+		smResults, err := smuggle.Check(targetURL, time.Duration(timeout)*time.Second)
+		if err == nil {
+			for _, r := range smResults {
+				if r.Delayed {
+					allFindings = append(allFindings, &vulns.Finding{
+						Module:      "smuggling",
+						Severity:    "high",
+						Confidence:  "medium",
+						Title:       "HTTP Request Smuggling - " + r.Variant + " desync (unconfirmed)",
+						Description: "A crafted request with conflicting Content-Length/Transfer-Encoding caused a delay, indicating a " + r.Variant + " desync. Confirm manually to avoid false positives.",
+						Payload:     r.Variant,
+						Evidence:    r.Detail,
+						OWASP:       "A03:2021 Injection",
+						CWE:         "CWE-444",
+					})
+					fmt.Printf("[+] Smuggling: %s desync signal detected\n", r.Variant)
+				}
+			}
+		}
+	}
+
 	// --- Differential Authorization Testing ---
 	if mode == "authz" || len(authzIdentities) > 0 {
 		fmt.Println("[*] Running differential authorization testing...")
@@ -1236,6 +1292,19 @@ func staticAuthHeaders() []string {
 		}
 	}
 	return hdrs
+}
+
+// testSelected reports whether a module name is in the active test selection.
+func testSelected(name string) bool {
+	if tests == "all" || tests == "" {
+		return true
+	}
+	for _, t := range strings.Split(tests, ",") {
+		if strings.TrimSpace(t) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func expandHome(path string) string {
