@@ -57,6 +57,8 @@ func (m *SQLiModule) Detect(payload mutator.Payload, baseBody string, baseStatus
 		"ora-01756", "ora-00933", "ora-01747",
 		"pg_query", "pg_exec", "postgresql",
 		"sqlite3.operationalerror", "sqlite_error",
+		"unrecognized token", "incomplete input", "near \"",
+		"no such column", "sqlite3.",
 		"sqlstate[", "sql syntax",
 		"mysql_fetch", "mysql_num_rows",
 		"supplied argument is not a valid mysql",

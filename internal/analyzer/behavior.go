@@ -72,7 +72,10 @@ func BehaviorAnalysis(baseline *engine.Response, results []engine.FuzzResult) []
 		// Score the anomaly
 		statusDiff := cluster.StatusCode != baseline.StatusCode
 		sizeDiff := math.Abs(float64(cluster.BodyLength-baseline.BodyLength)) > float64(baseline.BodyLength)*0.3
-		timeDiff := cluster.TimeMs > baseline.TimeMs*3
+		// Timing anomaly requires BOTH a large relative increase AND an absolute
+		// floor, otherwise local/single-threaded server jitter (e.g. 29ms ->
+		// 90ms) produces constant false positives.
+		timeDiff := cluster.TimeMs > baseline.TimeMs*5 && cluster.TimeMs > 2000
 
 		anomalyScore := 0
 		if statusDiff {
@@ -93,7 +96,7 @@ func BehaviorAnalysis(baseline *engine.Response, results []engine.FuzzResult) []
 			confidence = "high"
 			title = "Server crash / unhandled exception"
 			anomalyScore += 3
-		} else if cluster.StatusCode == 200 && baseline.StatusCode != 200 {
+		} else if cluster.StatusCode == 200 && (baseline.StatusCode == 401 || baseline.StatusCode == 403) {
 			severity = "high"
 			confidence = "medium"
 			title = "Access control bypass (200 on normally restricted endpoint)"
@@ -224,6 +227,13 @@ func TimingAnalysis(baseline *engine.Response, results []engine.FuzzResult) []*v
 			continue
 		}
 		if float64(r.Response.TimeMs) > threshold {
+			// A timing outlier is only credible as blind injection if the
+			// payload actually carries a delay primitive. A random slow
+			// response is almost always server jitter (e.g. concurrent requests
+			// queuing on a single-threaded server), not an injection.
+			if !payloadHasDelayPrimitive(r.Payload.Value) {
+				continue
+			}
 			key := r.Payload.Point.Name + "|" + r.Payload.Module
 			if seen[key] {
 				continue
@@ -233,9 +243,9 @@ func TimingAnalysis(baseline *engine.Response, results []engine.FuzzResult) []*v
 			findings = append(findings, &vulns.Finding{
 				Module:      "behavior",
 				Severity:    "high",
-				Confidence:  "high",
+				Confidence:  "medium",
 				Title:       "Timing anomaly - possible blind injection",
-				Description: "Response time significantly exceeds statistical baseline",
+				Description: "Response time significantly exceeds statistical baseline with a delay payload",
 				Payload:     r.Payload.Value,
 				Point:       r.Payload.Point,
 				Evidence:    fmt.Sprintf("time=%dms, mean=%.0fms, stddev=%.0fms, threshold=%.0fms", r.Response.TimeMs, mean, stddev, threshold),
@@ -362,4 +372,23 @@ func ReflectionScan(results []engine.FuzzResult, baseBody string) []*vulns.Findi
 		}
 	}
 	return findings
+}
+
+// payloadHasDelayPrimitive reports whether a payload carries a time-delay
+// primitive, which is what makes a slow response credible as blind injection
+// rather than server jitter.
+func payloadHasDelayPrimitive(p string) bool {
+	low := strings.ToLower(p)
+	primitives := []string{
+		"sleep(", "sleep ", "pg_sleep", "waitfor delay", "waitfor ", "benchmark(",
+		"dbms_lock.sleep", "dbms_pipe.receive_message", "make_set", "rlike sleep",
+		"and sleep", "or sleep", "|sleep", "; sleep", "$(sleep", "`sleep",
+		"ping -c", "ping -n", "timeout /t", "delay'", "nslookup",
+	}
+	for _, pr := range primitives {
+		if strings.Contains(low, pr) {
+			return true
+		}
+	}
+	return false
 }

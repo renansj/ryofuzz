@@ -115,7 +115,10 @@ func Parse(rawURL, method, body string, headers []string, cookies string) ([]Inj
 	}
 
 	if len(points) == 0 {
-		return nil, fmt.Errorf("nenhum injection point detectado")
+		// No per-parameter injection points. Return an empty slice (not an
+		// error) so host-level modules (infoleak, csrf, takeover, clickjack,
+		// session, headers) still run against the target.
+		return []InjectionPoint{}, nil
 	}
 
 	return points, nil
