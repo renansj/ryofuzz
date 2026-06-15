@@ -64,6 +64,7 @@ type ResponseInfo struct {
 	StatusCode    int
 	BodyLength    int
 	BodyHash      string
+	BodyPreview   string // normalized body sample, used for simhash coverage
 	TimingMs      int64
 	ErrorClass    string
 	Headers       map[string]string
@@ -450,6 +451,7 @@ func (f *CoverageGuidedFuzzer) execute(value string, point input.InjectionPoint)
 		StatusCode: resp.StatusCode,
 		BodyLength: n,
 		BodyHash:   fmt.Sprintf("%x", md5.Sum(buf[:n])),
+		BodyPreview: body,
 		TimingMs:   elapsed,
 		ErrorClass: extractErrorClass(body),
 		Interesting: resp.StatusCode == 500 || elapsed > 5000,
@@ -479,8 +481,9 @@ func (f *CoverageGuidedFuzzer) responseFingerprint(resp ResponseInfo) string {
 		timeBucket = 5
 	}
 
-	// Simhash of normalized body for structural similarity
-	sh := simhash(normalizeBody(resp.BodyHash))
+	// Simhash of normalized body for structural similarity (use the real body
+	// preview, not the md5 hash which carries no structural signal)
+	sh := simhash(normalizeBody(resp.BodyPreview))
 	top8 := sh >> 56
 
 	return fmt.Sprintf("%d|%d|%d|%s|%02x", resp.StatusCode, sizeBucket, timeBucket, resp.ErrorClass, top8)

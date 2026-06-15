@@ -1,11 +1,14 @@
 package engine
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strings"
 	"sync"
@@ -135,6 +138,11 @@ func sendFuzzed(cfg Config, payload mutator.Payload, verbose bool) FuzzResult {
 
 func sendFuzzedWith(client *http.Client, cfg Config, payload mutator.Payload, verbose bool) FuzzResult {
 
+	// Real multipart/form-data upload (when the module requests it via Metadata)
+	if payload.Metadata != nil && payload.Metadata["upload"] == "1" {
+		return sendMultipart(client, cfg, payload)
+	}
+
 	// Construir request com payload injetado
 	fuzzedURL := cfg.URL
 	fuzzedBody := cfg.Body
@@ -180,6 +188,83 @@ func sendFuzzedWith(client *http.Client, cfg Config, payload mutator.Payload, ve
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	return FuzzResult{
+		Payload: payload,
+		Point:   payload.Point,
+		Response: Response{
+			StatusCode:  resp.StatusCode,
+			Status:      resp.Status,
+			Headers:     resp.Header,
+			Body:        string(bodyBytes),
+			BodyLength:  len(bodyBytes),
+			TimeMs:      elapsed,
+			ContentType: resp.Header.Get("Content-Type"),
+		},
+	}
+}
+
+// sendMultipart builds a real multipart/form-data upload request. The module
+// signals this via Metadata: upload_field (form field name), upload_filename
+// (the dangerous filename), upload_content (file bytes), upload_ctype (MIME).
+func sendMultipart(client *http.Client, cfg Config, payload mutator.Payload) FuzzResult {
+	field := payload.Metadata["upload_field"]
+	if field == "" {
+		field = payload.Point.Name
+	}
+	if field == "" {
+		field = "file"
+	}
+	filename := payload.Metadata["upload_filename"]
+	if filename == "" {
+		filename = payload.Value
+	}
+	content := payload.Metadata["upload_content"]
+	if content == "" {
+		content = "ryofuzz-upload-test"
+	}
+	ctype := payload.Metadata["upload_ctype"]
+	if ctype == "" {
+		ctype = "application/octet-stream"
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	hdr := make(textproto.MIMEHeader)
+	hdr.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, field, filename))
+	hdr.Set("Content-Type", ctype)
+	part, err := mw.CreatePart(hdr)
+	if err == nil {
+		part.Write([]byte(content))
+	}
+	mw.Close()
+
+	method := cfg.Method
+	if method == "" {
+		method = "POST"
+	}
+	req, err := http.NewRequest(method, cfg.URL, &buf)
+	if err != nil {
+		return FuzzResult{Payload: payload, Point: payload.Point, Error: err}
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	for _, h := range cfg.Headers {
+		if parts := strings.SplitN(h, ":", 2); len(parts) == 2 {
+			req.Header.Set(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+		}
+	}
+	if cfg.Cookies != "" {
+		req.Header.Set("Cookie", cfg.Cookies)
+	}
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	elapsed := time.Since(start).Milliseconds()
+	if err != nil {
+		return FuzzResult{Payload: payload, Point: payload.Point, Error: err}
+	}
+	defer resp.Body.Close()
 	bodyBytes, _ := io.ReadAll(resp.Body)
 
 	return FuzzResult{

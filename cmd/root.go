@@ -57,6 +57,7 @@ var (
 	verbose     bool
 	followRedir bool
 	rateLimit   int
+	maxRequests int
 
 	// Output
 	outputFile string
@@ -131,6 +132,7 @@ var (
 	proxyPort int
 	proxyCA   string
 	proxyEndpoints string
+	proxyScope []string
 )
 
 var rootCmd = &cobra.Command{
@@ -170,6 +172,7 @@ func init() {
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	rootCmd.Flags().BoolVar(&followRedir, "follow", false, "Follow redirects")
 	rootCmd.Flags().IntVar(&rateLimit, "rate", 0, "Rate limit (requests/segundo, 0=ilimitado)")
+	rootCmd.Flags().IntVar(&maxRequests, "max-requests", 0, "Global cap on total payloads per target (0=unlimited)")
 
 	// Output
 	rootCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file")
@@ -242,6 +245,7 @@ func init() {
 	rootCmd.Flags().IntVar(&proxyPort, "proxy-port", 8081, "Proxy listen port")
 	rootCmd.Flags().StringVar(&proxyCA, "proxy-ca", "ryofuzz-ca.pem", "Path to export CA cert for browser trust")
 	rootCmd.Flags().StringVar(&proxyEndpoints, "proxy-endpoints", "ryofuzz-endpoints.json", "Path to export discovered endpoints as OpenAPI spec")
+	rootCmd.Flags().StringSliceVar(&proxyScope, "proxy-scope", nil, "Restrict active fuzzing to these hosts (repeatable). Recon maps all traffic.")
 }
 
 func Execute() error {
@@ -295,7 +299,7 @@ func run(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to load workflow: %w", err)
 		}
 		fmt.Printf("[+] Workflow %q: %d steps\n", wf.Name, len(wf.Steps))
-		client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
+		client := engine.NewAuthedClient(timeout, staticAuthHeaders(), cookies, proxy, followRedir)
 		wfFindings := workflow.Run(wf, client)
 		fmt.Printf("[+] Workflow findings: %d\n", len(wfFindings))
 		var allFindings []*vulns.Finding
@@ -741,6 +745,15 @@ func run(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		// Global request budget: cap total payloads to avoid explosion
+		// (38 modules + smartgen + CVE + LLM can produce tens of thousands).
+		if maxRequests > 0 && len(allPayloads) > maxRequests {
+			if target == targetURL {
+				fmt.Printf("[!] Payload count %d exceeds budget %d, truncating\n", len(allPayloads), maxRequests)
+			}
+			allPayloads = allPayloads[:maxRequests]
+		}
+
 		if target == targetURL {
 			fmt.Printf("[*] Total payloads generated: %d (modules=%d, smartgen=%d/point, cve=%s)\n",
 				len(allPayloads), len(modules), 500, cveProbe.ServerHeader)
@@ -896,20 +909,55 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// --- Taint/Canary scan ---
 	if taintScan || mode == "taint" {
-		fmt.Println("[*] Running canary propagation scan...")
+		fmt.Println("[*] Running canary propagation scan (inject + scan)...")
 		tracker := taint.NewTracker()
-		// Generate canaries for each injection point on target
-		points, _ := input.Parse(targetURL, method, body, headers, cookies)
-		for _, p := range points {
-			tracker.Generate(targetURL, p.Name, string(p.Location))
+		// Propagate auth/session into the tracker
+		if session != nil {
+			hdrMap := map[string]string{}
+			for _, h := range session.GetAuthHeaders(nil) {
+				if parts := strings.SplitN(h, ":", 2); len(parts) == 2 {
+					hdrMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+				}
+			}
+			if cookies != "" {
+				hdrMap["Cookie"] = cookies
+			}
+			tracker.SetHeaders(hdrMap)
+		} else if cookies != "" {
+			tracker.SetHeaders(map[string]string{"Cookie": cookies})
 		}
-		// Scan all crawled targets for canaries
-		scanTargets := targets
+
+		// Build injection targets from the target's injection points
+		points, _ := input.Parse(targetURL, method, body, headers, cookies)
+		var injTargets []taint.InjectionTarget
+		var params []taint.ParamRef
+		for _, p := range points {
+			loc := "query"
+			switch p.Location {
+			case input.LocFormBody:
+				loc = "form"
+			case input.LocJSONBody:
+				loc = "json"
+			case input.LocQueryParam:
+				loc = "query"
+			default:
+				continue // skip path/header/cookie for canary injection
+			}
+			params = append(params, taint.ParamRef{Name: p.Name, Location: loc})
+		}
+		if len(params) > 0 {
+			injTargets = append(injTargets, taint.InjectionTarget{
+				URL: targetURL, Method: method, Body: body, Params: params,
+			})
+		}
+
+		// Scan all crawled targets (plus the target) for resurfaced canaries
+		scanTargets := append([]string{targetURL}, targets...)
 		if len(crawlTargets) > 0 {
 			scanTargets = append(scanTargets, crawlTargets...)
 		}
 		client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
-		matches := tracker.InjectAndScan(client, scanTargets)
+		matches := tracker.InjectAndScan(client, injTargets, scanTargets)
 		for _, m := range matches {
 			allFindings = append(allFindings, &vulns.Finding{
 				Module:     "taint",
@@ -924,6 +972,8 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 		if len(matches) > 0 {
 			fmt.Printf("[+] Canary propagation: %d stored injection(s) found!\n", len(matches))
+		} else {
+			fmt.Println("[*] Canary propagation: no stored injections detected")
 		}
 	}
 
@@ -997,6 +1047,7 @@ doReport:
 		} else {
 			fmt.Println("[*] Running headless browser DOM XSS scan...")
 			scanner := &browser.DOMScanner{}
+			scanner.SetAuth(staticAuthHeaders(), cookies)
 			scanTargets := targets
 			for _, t := range scanTargets {
 				points, err := input.Parse(t, method, body, headers, cookies)
@@ -1090,6 +1141,33 @@ func parseTests(t string) []string {
 	return strings.Split(t, ",")
 }
 
+// staticAuthHeaders returns auth headers derivable from flags without a login
+// round-trip (bearer/custom token). Used by early modes (workflow, authz, race,
+// taint) so they inherit authentication. Form-based auth is not covered here.
+func staticAuthHeaders() []string {
+	var hdrs []string
+	hdrs = append(hdrs, headers...) // user-supplied -H
+	switch authMethod {
+	case "bearer":
+		if authToken != "" {
+			prefix := authPrefix
+			if prefix == "" {
+				prefix = "Bearer"
+			}
+			hdrs = append(hdrs, "Authorization: "+prefix+" "+authToken)
+		}
+	case "custom":
+		if authToken != "" {
+			hn := authHeader
+			if hn == "" {
+				hn = "Authorization"
+			}
+			hdrs = append(hdrs, hn+": "+authToken)
+		}
+	}
+	return hdrs
+}
+
 func expandHome(path string) string {
 	if strings.HasPrefix(path, "~/") {
 		home, err := os.UserHomeDir()
@@ -1110,6 +1188,11 @@ func runProxyMode() error {
 
 	if err := p.ExportCA(proxyCA); err != nil {
 		return fmt.Errorf("failed to export CA: %w", err)
+	}
+
+	if len(proxyScope) > 0 {
+		p.SetScope(proxyScope)
+		fmt.Printf("[*] Active fuzzing scoped to: %s\n", strings.Join(proxyScope, ", "))
 	}
 
 	// Live finding output

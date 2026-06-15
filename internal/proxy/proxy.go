@@ -40,6 +40,10 @@ type Proxy struct {
 
 	recorder *EndpointRecorder
 
+	// scope: if non-empty, only hosts matching one of these suffixes are fuzzed.
+	// Recon/mapping still happens for all traffic; only active probing is gated.
+	scope []string
+
 	OnFinding func(*vulns.Finding)
 }
 
@@ -96,6 +100,33 @@ func (p *Proxy) Findings() []*vulns.Finding {
 // ExportEndpoints writes the discovered endpoints as an OpenAPI 3.0 spec.
 func (p *Proxy) ExportEndpoints(path string) error {
 	return p.recorder.ExportOpenAPI(path)
+}
+
+// SetScope restricts active fuzzing to hosts matching the given suffixes.
+// Empty scope means everything is in scope. Recon mapping is never gated.
+func (p *Proxy) SetScope(hosts []string) {
+	var cleaned []string
+	for _, h := range hosts {
+		h = strings.TrimSpace(h)
+		if h != "" {
+			cleaned = append(cleaned, strings.ToLower(h))
+		}
+	}
+	p.scope = cleaned
+}
+
+// inScope reports whether a host is allowed for active fuzzing.
+func (p *Proxy) inScope(host string) bool {
+	if len(p.scope) == 0 {
+		return true
+	}
+	host = strings.ToLower(hostOnly(host))
+	for _, s := range p.scope {
+		if host == s || strings.HasSuffix(host, "."+s) || strings.Contains(host, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // EndpointCount returns how many distinct endpoints were observed.
@@ -208,8 +239,12 @@ func (p *Proxy) proxyAndFuzz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	w.Write(respBody)
 
-	// Background fuzz
-	go p.lightFuzz(r, bodyBytes, resp, respBody)
+	// Background fuzz only for in-scope hosts. Recon mapping already happened
+	// above for all traffic; active probing is gated to avoid hitting
+	// out-of-scope third parties (CDNs, analytics, etc).
+	if p.inScope(r.URL.Host) {
+		go p.lightFuzz(r, bodyBytes, resp, respBody)
+	}
 }
 
 // lightFuzz runs light active probes and passive checks.

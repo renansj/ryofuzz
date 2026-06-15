@@ -121,23 +121,47 @@ func (m *OAuthModule) Detect(payload mutator.Payload, baseBody string, baseStatu
 		}
 	}
 
-	// Check for missing state validation
+	// Check for missing state validation.
+	// Only flag when there is a POSITIVE signal that the OAuth flow proceeded
+	// without state: an authorization code or token was actually issued, or a
+	// redirect back to a redirect_uri occurred. Absence of error words alone is
+	// not sufficient (too false-positive prone).
 	if strings.Contains(payload.Variant, "state") {
-		if respStatus == 200 || respStatus == 302 {
-			if !strings.Contains(respBody, "invalid") && !strings.Contains(respBody, "error") &&
-				!strings.Contains(respBody, "missing") {
-				return &Finding{
-					Module:      "oauth",
-					Severity:    "high",
-					Confidence:  "medium",
-					Title:       "OAuth CSRF - State parameter not validated",
-					Description: "The server accepts OAuth flow without a valid state parameter",
-					Payload:     payload.Value,
-					Point:       payload.Point,
-					Evidence:    "Request accepted without valid state param",
-					OWASP:       "A07:2021",
-					CWE:         "CWE-352",
-				}
+		issued := false
+		evidence := ""
+
+		// Authorization code or token issued in a redirect Location
+		for _, loc := range respHeaders["Location"] {
+			low := strings.ToLower(loc)
+			if strings.Contains(low, "code=") || strings.Contains(low, "access_token=") ||
+				strings.Contains(low, "id_token=") {
+				issued = true
+				evidence = "Location issued credential without state: " + loc
+				break
+			}
+		}
+		// Token issued directly in the body
+		if !issued && (respStatus == 200) {
+			low := strings.ToLower(respBody)
+			if strings.Contains(low, "\"access_token\"") || strings.Contains(low, "\"id_token\"") ||
+				strings.Contains(low, "\"authorization_code\"") {
+				issued = true
+				evidence = "Token issued in response body without state parameter"
+			}
+		}
+
+		if issued {
+			return &Finding{
+				Module:      "oauth",
+				Severity:    "high",
+				Confidence:  "high",
+				Title:       "OAuth CSRF - State parameter not validated",
+				Description: "The authorization server issued credentials without a valid state parameter, enabling CSRF / login fixation.",
+				Payload:     payload.Value,
+				Point:       payload.Point,
+				Evidence:    evidence,
+				OWASP:       "A07:2021",
+				CWE:         "CWE-352",
 			}
 		}
 	}

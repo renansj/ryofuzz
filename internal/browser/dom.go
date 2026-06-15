@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
 
@@ -19,7 +20,41 @@ type DOMFinding struct {
 }
 
 // DOMScanner performs headless browser DOM XSS detection
-type DOMScanner struct{}
+type DOMScanner struct {
+	// extraHeaders are applied to every navigation (auth/session propagation)
+	extraHeaders map[string]interface{}
+}
+
+// SetAuth configures headers and cookies propagated into the browser so DOM
+// scanning works against authenticated pages.
+func (s *DOMScanner) SetAuth(headers []string, cookies string) {
+	if s.extraHeaders == nil {
+		s.extraHeaders = make(map[string]interface{})
+	}
+	for _, h := range headers {
+		parts := splitHeader(h)
+		if parts != nil {
+			s.extraHeaders[parts[0]] = parts[1]
+		}
+	}
+	if cookies != "" {
+		s.extraHeaders["Cookie"] = cookies
+	}
+}
+
+func splitHeader(h string) []string {
+	for i := 0; i < len(h); i++ {
+		if h[i] == ':' {
+			name := h[:i]
+			val := h[i+1:]
+			for len(val) > 0 && (val[0] == ' ' || val[0] == '\t') {
+				val = val[1:]
+			}
+			return []string{name, val}
+		}
+	}
+	return nil
+}
 
 // ScanDOMXSS launches headless chromium and tests for DOM-based XSS
 func (s *DOMScanner) ScanDOMXSS(targetURL string, params []string) []DOMFinding {
@@ -65,6 +100,13 @@ func (s *DOMScanner) ScanDOMXSS(targetURL string, params []string) []DOMFinding 
 			var executed bool
 			var sinks string
 			err := chromedp.Run(tCtx,
+				chromedp.ActionFunc(func(ctx context.Context) error {
+					if len(s.extraHeaders) > 0 {
+						_ = network.Enable().Do(ctx)
+						_ = network.SetExtraHTTPHeaders(network.Headers(s.extraHeaders)).Do(ctx)
+					}
+					return nil
+				}),
 				chromedp.ActionFunc(func(ctx context.Context) error {
 					_, exp, err := runtime_evaluate(ctx, hookJS)
 					_ = exp
