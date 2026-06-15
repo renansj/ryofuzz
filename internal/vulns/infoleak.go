@@ -1,6 +1,7 @@
 package vulns
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/renansj/ryofuzz/internal/input"
@@ -145,14 +146,8 @@ func variantIn(v string, list []string) bool {
 }
 
 func statusStr(s int) string {
-	switch s {
-	case 404:
-		return "404"
-	case 403:
-		return "403"
-	case 0:
+	if s == 0 {
 		return "none"
-	default:
-		return "non-200"
 	}
+	return strconv.Itoa(s)
 }

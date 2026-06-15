@@ -163,7 +163,7 @@ ryofuzz --openapi app-map.json -t all
 
 This turns casual browsing into a reusable attack surface map. The `--openapi` flag accepts both local file paths and HTTP URLs.
 
-## Vulnerability Modules (40)
+## Vulnerability Modules (42)
 
 | Module | What it tests |
 |--------|---------------|
@@ -208,6 +208,8 @@ This turns casual browsing into a reusable attack surface map. The `--openapi` f
 | `el` | Expression Language Injection (SpEL, OGNL, MVEL, JEXL, JSP EL) |
 | `infoleak` | Sensitive file / info disclosure (.git, .env, actuator, sourcemaps, backups) |
 | `csrf` | Cross-Site Request Forgery (missing anti-CSRF token, missing SameSite) |
+| `takeover` | Subdomain takeover (dangling CNAME fingerprints: S3, GitHub Pages, Heroku, etc) |
+| `saml` | SAML XML Signature Wrapping / auth bypass (XSW, comment injection, unsigned assertion) |
 
 ## Features
 

@@ -72,6 +72,8 @@ func Select(tests []string) []VulnModule {
 		&ELInjectModule{},
 		&InfoLeakModule{},
 		&CSRFModule{},
+		&TakeoverModule{},
+		&SAMLModule{},
 	}
 
 	if len(tests) == 1 && tests[0] == "all" {
