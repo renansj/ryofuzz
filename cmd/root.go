@@ -776,9 +776,9 @@ func run(cmd *cobra.Command, args []string) error {
 		// (38 modules + smartgen + CVE + LLM can produce tens of thousands).
 		if maxRequests > 0 && len(allPayloads) > maxRequests {
 			if target == targetURL {
-				fmt.Printf("[!] Payload count %d exceeds budget %d, truncating\n", len(allPayloads), maxRequests)
+				fmt.Printf("[!] Payload count %d exceeds budget %d, interleaving across modules\n", len(allPayloads), maxRequests)
 			}
-			allPayloads = allPayloads[:maxRequests]
+			allPayloads = interleaveByModule(allPayloads, maxRequests)
 		}
 
 		if target == targetURL {
@@ -1350,6 +1350,38 @@ func (a *interactshAdapter) Poll(id string) (string, string, bool) {
 	}
 	return proto, cb.Method + " " + cb.Path, true
 }
+// interleaveByModule distributes a request budget fairly across modules by
+// round-robin, so a large early module does not starve later ones.
+func interleaveByModule(payloads []mutator.Payload, limit int) []mutator.Payload {
+	groups := map[string][]mutator.Payload{}
+	var order []string
+	for _, p := range payloads {
+		if _, ok := groups[p.Module]; !ok {
+			order = append(order, p.Module)
+		}
+		groups[p.Module] = append(groups[p.Module], p)
+	}
+	var out []mutator.Payload
+	idx := map[string]int{}
+	for len(out) < limit {
+		progressed := false
+		for _, m := range order {
+			if idx[m] < len(groups[m]) {
+				out = append(out, groups[m][idx[m]])
+				idx[m]++
+				progressed = true
+				if len(out) >= limit {
+					break
+				}
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
+	return out
+}
+
 
 // testSelected reports whether a module name is in the active test selection.
 func testSelected(name string) bool {
