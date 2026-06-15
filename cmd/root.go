@@ -92,9 +92,11 @@ var (
 	pluginsDir string
 
 	// Nuclei templates
-	nucleiDir      string
-	nucleiTags     string
-	nucleiSeverity string
+	nucleiDir           string
+	nucleiTags          string
+	nucleiSeverity      string
+	nucleiStrict        bool
+	nucleiReportSkipped bool
 
 	// Logging
 	logFile string
@@ -211,6 +213,8 @@ func init() {
 	rootCmd.Flags().StringVar(&nucleiDir, "nuclei-templates", "", "Path to nuclei-templates directory")
 	rootCmd.Flags().StringVar(&nucleiTags, "nuclei-tags", "", "Filter nuclei templates by tags (comma-separated)")
 	rootCmd.Flags().StringVar(&nucleiSeverity, "nuclei-severity", "critical,high", "Filter nuclei templates by severity")
+	rootCmd.Flags().BoolVar(&nucleiStrict, "nuclei-strict", false, "Report templates skipped due to unsupported features as findings")
+	rootCmd.Flags().BoolVar(&nucleiReportSkipped, "nuclei-report-skipped", false, "List nuclei templates skipped for unsupported features")
 
 	// Logging
 	rootCmd.Flags().StringVar(&logFile, "log-file", ".ryofuzz-log.jsonl", "Path for request/response JSONL log")
@@ -402,6 +406,7 @@ func run(cmd *cobra.Command, args []string) error {
 			oobManager = nil
 		} else {
 			fmt.Printf("[+] OOB server listening on %s (domain: %s)\n", oobCfg.Listen, oobManager.Domain())
+			nuclei.SetInteractshProvider(&interactshAdapter{m: oobManager})
 		}
 	}
 
@@ -889,20 +894,48 @@ func run(cmd *cobra.Command, args []string) error {
 			fmt.Printf("[-] Failed to load nuclei templates: %v\n", err)
 		} else if len(templates) > 0 {
 			fmt.Printf("[*] Running %d nuclei templates...\n", len(templates))
+			skipped := 0
 			for _, t := range templates {
 				result := nuclei.Execute(t, targetURL, timeout, proxy)
+				if result.Skipped {
+					skipped++
+					if nucleiReportSkipped || verbose {
+						fmt.Printf("    [skip] %s: %s\n", result.TemplateID, result.SkipReason)
+					}
+					if nucleiStrict {
+						allFindings = append(allFindings, &vulns.Finding{
+							Module: "nuclei", Severity: "info", Confidence: "low",
+							Title:    fmt.Sprintf("[SKIPPED] %s", result.TemplateID),
+							Evidence: "Unsupported feature: " + result.SkipReason,
+							OWASP:    "N/A", CWE: "N/A",
+						})
+					}
+					continue
+				}
 				if result.Matched {
+					owasp := "A06:2021 Vulnerable and Outdated Components"
+					cwe := "CWE-1035"
+					if result.CWEID != "" {
+						cwe = result.CWEID
+					}
+					title := fmt.Sprintf("[%s] %s", result.TemplateID, result.Name)
+					if result.CVEID != "" {
+						title = fmt.Sprintf("[%s] %s", result.CVEID, result.Name)
+					}
 					allFindings = append(allFindings, &vulns.Finding{
 						Module:     "nuclei",
 						Severity:   result.Severity,
 						Confidence: "confirmed",
-						Title:      fmt.Sprintf("[%s] %s", result.TemplateID, result.Name),
+						Title:      title,
 						Payload:    result.URL,
 						Evidence:   result.MatchedAt,
-						OWASP:      "A06:2021 Vulnerable and Outdated Components",
-						CWE:        "CWE-1035",
+						OWASP:      owasp,
+						CWE:        cwe,
 					})
 				}
+			}
+			if skipped > 0 {
+				fmt.Printf("[*] Nuclei: %d template(s) skipped (unsupported features). Use --nuclei-report-skipped to list.\n", skipped)
 			}
 		}
 	}
@@ -1292,6 +1325,30 @@ func staticAuthHeaders() []string {
 		}
 	}
 	return hdrs
+}
+
+// interactshAdapter bridges the OOB manager to the nuclei interactsh provider.
+type interactshAdapter struct {
+	m *oob.Manager
+}
+
+func (a *interactshAdapter) NewURL() (string, string) {
+	token := a.m.GenerateToken("interactsh", "nuclei", "")
+	// Return host/path form (no scheme); templates prepend their own scheme.
+	return token, a.m.Domain() + "/t/" + token
+}
+
+func (a *interactshAdapter) Poll(id string) (string, string, bool) {
+	cbs := a.m.GetCallbacksForToken(id)
+	if len(cbs) == 0 {
+		return "", "", false
+	}
+	cb := cbs[0]
+	proto := "http"
+	if strings.EqualFold(cb.Method, "DNS") {
+		proto = "dns"
+	}
+	return proto, cb.Method + " " + cb.Path, true
 }
 
 // testSelected reports whether a module name is in the active test selection.
