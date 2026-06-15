@@ -25,11 +25,13 @@ import (
 	"github.com/renansj/ryofuzz/internal/nuclei"
 	"github.com/renansj/ryofuzz/internal/oob"
 	"github.com/renansj/ryofuzz/internal/plugins"
+	"github.com/renansj/ryofuzz/internal/race"
 	"github.com/renansj/ryofuzz/internal/reporter"
 	"github.com/renansj/ryofuzz/internal/schema"
 	"github.com/renansj/ryofuzz/internal/taint"
 	"github.com/renansj/ryofuzz/internal/vulns"
 	"github.com/renansj/ryofuzz/internal/waf"
+	"github.com/renansj/ryofuzz/internal/workflow"
 	"github.com/spf13/cobra"
 )
 
@@ -114,6 +116,12 @@ var (
 
 	// Browser
 	browserScan bool
+
+	// Workflow
+	workflowFile string
+
+	// Race single-packet
+	raceSinglepacket int
 )
 
 var rootCmd = &cobra.Command{
@@ -213,6 +221,12 @@ func init() {
 
 	// Browser
 	rootCmd.Flags().BoolVar(&browserScan, "browser", false, "Enable headless browser DOM XSS scanning")
+
+	// Workflow
+	rootCmd.Flags().StringVar(&workflowFile, "workflow", "", "Path to workflow YAML for stateful fuzzing")
+
+	// Race single-packet
+	rootCmd.Flags().IntVar(&raceSinglepacket, "race-singlepacket", 0, "Single-packet race attack parallel requests (0=disabled)")
 }
 
 func Execute() error {
@@ -235,6 +249,71 @@ func run(cmd *cobra.Command, args []string) error {
 		if targetURL == "" {
 			return fmt.Errorf("target URL required: use -u or pipe via stdin")
 		}
+	}
+
+	// --- Workflow mode ---
+	if workflowFile != "" {
+		fmt.Printf("[*] Loading workflow: %s\n", workflowFile)
+		wf, err := workflow.LoadWorkflow(workflowFile)
+		if err != nil {
+			return fmt.Errorf("failed to load workflow: %w", err)
+		}
+		fmt.Printf("[+] Workflow %q: %d steps\n", wf.Name, len(wf.Steps))
+		client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
+		wfFindings := workflow.Run(wf, client)
+		fmt.Printf("[+] Workflow findings: %d\n", len(wfFindings))
+		var allFindings []*vulns.Finding
+		for _, f := range wfFindings {
+			mod := "logic"
+			if f.Strategy == "replay_n_times" {
+				mod = "race"
+			}
+			allFindings = append(allFindings, &vulns.Finding{
+				Module:     mod,
+				Severity:   f.Severity,
+				Confidence: "high",
+				Title:      fmt.Sprintf("[%s] %s: %s", f.Strategy, f.Step, f.Type),
+				Evidence:   f.Evidence,
+				OWASP:      "A04:2021 Insecure Design",
+				CWE:        "CWE-362",
+			})
+		}
+		reporter.Report(allFindings, format, outputFile, verbose)
+		return nil
+	}
+
+	// --- Single-packet race attack ---
+	if raceSinglepacket > 0 {
+		fmt.Printf("[*] Single-packet race attack (%d parallel requests)\n", raceSinglepacket)
+		hdrs := make(map[string]string)
+		for _, h := range headers {
+			parts := strings.SplitN(h, ":", 2)
+			if len(parts) == 2 {
+				hdrs[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+			}
+		}
+		if cookies != "" {
+			hdrs["Cookie"] = cookies
+		}
+		attacker := &race.SinglePacketAttack{}
+		results := attacker.Attack(targetURL, method, body, hdrs, raceSinglepacket)
+		diverged, evidence := race.DetectDivergence(results)
+		if diverged {
+			fmt.Printf("[!] RACE CONDITION DETECTED: %s\n", evidence)
+			finding := &vulns.Finding{
+				Module:     "race",
+				Severity:   "high",
+				Confidence: "high",
+				Title:      "HTTP/2 Single-Packet Race Condition (TOCTOU)",
+				Evidence:   evidence,
+				OWASP:      "A04:2021 Insecure Design",
+				CWE:        "CWE-362",
+			}
+			reporter.Report([]*vulns.Finding{finding}, format, outputFile, verbose)
+		} else {
+			fmt.Println("[*] No race condition detected (responses uniform)")
+		}
+		return nil
 	}
 
 	// --- OpenAPI Import ---

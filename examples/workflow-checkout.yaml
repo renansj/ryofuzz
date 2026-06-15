@@ -1,0 +1,55 @@
+name: "E-commerce Checkout Flow"
+steps:
+  - name: "login"
+    request:
+      method: POST
+      url: "https://target.com/api/login"
+      body: '{"username":"test@example.com","password":"password123"}'
+      headers:
+        Content-Type: "application/json"
+    extract:
+      token: '"token":"([^"]+)"'
+      session_id: '"session_id":"([^"]+)"'
+
+  - name: "add-to-cart"
+    request:
+      method: POST
+      url: "https://target.com/api/cart/add"
+      body: '{"product_id":"PROD-001","qty":1}'
+      headers:
+        Content-Type: "application/json"
+        Authorization: "Bearer {{token}}"
+    fuzz:
+      - negative_qty
+      - skip_auth
+    assert_logic:
+      - qty_positive
+      - status_ok
+
+  - name: "apply-coupon"
+    request:
+      method: POST
+      url: "https://target.com/api/cart/coupon"
+      body: '{"code":"SAVE50"}'
+      headers:
+        Content-Type: "application/json"
+        Authorization: "Bearer {{token}}"
+    fuzz:
+      - replay_n_times
+    assert_logic:
+      - total_not_negative
+
+  - name: "checkout"
+    request:
+      method: POST
+      url: "https://target.com/api/checkout"
+      body: '{"session_id":"{{session_id}}","payment_method":"card"}'
+      headers:
+        Content-Type: "application/json"
+        Authorization: "Bearer {{token}}"
+    fuzz:
+      - reorder
+      - skip_auth
+    assert_logic:
+      - status_ok
+      - total_not_negative
