@@ -3,12 +3,14 @@ package cmd
 import (
 	"bufio"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/renansj/ryofuzz/internal/analyzer"
 	"github.com/renansj/ryofuzz/internal/auth"
+	"github.com/renansj/ryofuzz/internal/authz"
 	"github.com/renansj/ryofuzz/internal/behavioral"
 	"github.com/renansj/ryofuzz/internal/chain"
 	"github.com/renansj/ryofuzz/internal/confirm"
@@ -22,6 +24,8 @@ import (
 	"github.com/renansj/ryofuzz/internal/oob"
 	"github.com/renansj/ryofuzz/internal/plugins"
 	"github.com/renansj/ryofuzz/internal/reporter"
+	"github.com/renansj/ryofuzz/internal/schema"
+	"github.com/renansj/ryofuzz/internal/taint"
 	"github.com/renansj/ryofuzz/internal/vulns"
 	"github.com/spf13/cobra"
 )
@@ -82,6 +86,15 @@ var (
 
 	// Logging
 	logFile string
+
+	// Taint/Canary
+	taintScan bool
+
+	// Authz
+	authzIdentities []string
+
+	// OpenAPI
+	openAPIURL string
 )
 
 var rootCmd = &cobra.Command{
@@ -158,6 +171,15 @@ func init() {
 
 	// Logging
 	rootCmd.Flags().StringVar(&logFile, "log-file", ".ryofuzz-log.jsonl", "Path for request/response JSONL log")
+
+	// Taint/Canary
+	rootCmd.Flags().BoolVar(&taintScan, "taint-scan", false, "Enable canary propagation for stored/second-order detection")
+
+	// Authz
+	rootCmd.Flags().StringSliceVar(&authzIdentities, "authz-identities", nil, "Identities for authz testing (name:header:value, repeatable)")
+
+	// OpenAPI
+	rootCmd.Flags().StringVar(&openAPIURL, "openapi", "", "URL to OpenAPI/Swagger spec for endpoint discovery")
 }
 
 func Execute() error {
@@ -179,6 +201,22 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 		if targetURL == "" {
 			return fmt.Errorf("target URL required: use -u or pipe via stdin")
+		}
+	}
+
+	// --- OpenAPI Import ---
+	if openAPIURL != "" {
+		spec, err := schema.LoadFromURL(openAPIURL)
+		if err != nil {
+			fmt.Printf("[-] Failed to load OpenAPI: %v\n", err)
+		} else {
+			oaTargets := schema.ExtractTargets(spec, targetURL)
+			fmt.Printf("[+] OpenAPI: discovered %d endpoints\n", len(oaTargets))
+			if len(oaTargets) > 0 && targetURL == "" {
+				targetURL = oaTargets[0].URL
+				method = oaTargets[0].Method
+				body = oaTargets[0].Body
+			}
 		}
 	}
 
@@ -666,6 +704,75 @@ func run(cmd *cobra.Command, args []string) error {
 					CWE:        "CWE-918",
 				})
 			}
+		}
+	}
+
+	// --- Taint/Canary scan ---
+	if taintScan || mode == "taint" {
+		fmt.Println("[*] Running canary propagation scan...")
+		tracker := taint.NewTracker()
+		// Generate canaries for each injection point on target
+		points, _ := input.Parse(targetURL, method, body, headers, cookies)
+		for _, p := range points {
+			tracker.Generate(targetURL, p.Name, string(p.Location))
+		}
+		// Scan all crawled targets for canaries
+		scanTargets := targets
+		if len(crawlTargets) > 0 {
+			scanTargets = append(scanTargets, crawlTargets...)
+		}
+		client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
+		matches := tracker.InjectAndScan(client, scanTargets)
+		for _, m := range matches {
+			allFindings = append(allFindings, &vulns.Finding{
+				Module:     "taint",
+				Severity:   "critical",
+				Confidence: "confirmed",
+				Title:      fmt.Sprintf("Stored/Second-Order Injection: canary from %s/%s found at %s", m.Source.Endpoint, m.Source.Param, m.FoundAt),
+				Payload:    m.Source.Canary,
+				Evidence:   m.Context,
+				OWASP:      "A03:2021 Injection",
+				CWE:        "CWE-79",
+			})
+		}
+		if len(matches) > 0 {
+			fmt.Printf("[+] Canary propagation: %d stored injection(s) found!\n", len(matches))
+		}
+	}
+
+	// --- Differential Authorization Testing ---
+	if mode == "authz" || len(authzIdentities) > 0 {
+		fmt.Println("[*] Running differential authorization testing...")
+		var identities []authz.Identity
+		for _, raw := range authzIdentities {
+			parts := strings.SplitN(raw, ":", 3)
+			if len(parts) != 3 {
+				continue
+			}
+			identities = append(identities, authz.Identity{
+				Name:    parts[0],
+				Headers: map[string]string{parts[1]: parts[2]},
+			})
+		}
+		if len(identities) >= 2 {
+			client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
+			testTargets := targets
+			for _, t := range testTargets {
+				azFindings := authz.TestEndpoint(client, method, t, body, identities)
+				for _, af := range azFindings {
+					allFindings = append(allFindings, &vulns.Finding{
+						Module:     "authz",
+						Severity:   "high",
+						Confidence: "high",
+						Title:      fmt.Sprintf("Authorization bypass (%s): %s accessed as %s", af.Type, af.URL, af.LowPriv),
+						Evidence:   af.Evidence,
+						OWASP:      "A01:2021 Broken Access Control",
+						CWE:        "CWE-862",
+					})
+				}
+			}
+		} else {
+			fmt.Println("[-] Need at least 2 identities for authz testing")
 		}
 	}
 
