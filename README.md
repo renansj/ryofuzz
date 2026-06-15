@@ -319,9 +319,10 @@ Discovery:
       --ignore-robots        Ignore robots.txt
 
 OOB:
-      --oob string           OOB domain/IP
+      --oob string           OOB domain/IP:port for callbacks (e.g., 10.10.14.5:8888)
       --oob-listen int       Listener port (default 8888)
       --oob-mode string      local, ngrok, private (default "local")
+      --oob-wait int         Seconds to wait for OOB callbacks (default 3)
 
 Nuclei:
       --nuclei-templates string   Path to nuclei-templates directory
@@ -334,6 +335,41 @@ Plugins:
 Other:
       --proxy string         HTTP proxy (e.g., http://127.0.0.1:8080)
 ```
+
+## Detection quality
+
+### Confirmation loops (false positive reduction)
+
+Time-based findings are automatically re-sent twice:
+1. Same payload to confirm the delay reproduces
+2. No-sleep variant (sleep(0)) to rule out network latency
+
+If the delay does not reproduce, the finding is discarded silently.
+
+Boolean-based SQLi findings are confirmed by sending the complementary payload (e.g., `OR 1=2` after `OR 1=1`). If both responses are identical, it is not a real boolean oracle and the finding is discarded.
+
+### Coverage-guided corpus persistence
+
+In guided mode, the evolved corpus is saved to `.ryofuzz-corpus.json` at scan completion and reloaded automatically on next run. This enables incremental fuzzing across sessions.
+
+```bash
+# First run: explores from scratch
+ryofuzz -u "http://target/api?id=1" --mode guided -n 10000
+
+# Second run: resumes from previous corpus
+ryofuzz -u "http://target/api?id=1" --mode guided -n 50000
+```
+
+### OOB callbacks for blind detection
+
+Built-in HTTP listener with token correlation for blind SSRF, XXE, and RFI:
+
+```bash
+ryofuzz -u "http://target/webhook" -d '{"url":"http://x.com"}' \
+  -t ssrf --oob 10.10.14.5:8888 --oob-listen 8888 --oob-mode private --oob-wait 10
+```
+
+The server generates unique tokens per payload. When the target makes an outbound request to the listener, the callback is correlated with the exact payload that triggered it, producing a confirmed critical finding.
 
 ## Architecture
 
