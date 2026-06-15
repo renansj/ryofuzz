@@ -57,6 +57,12 @@ func (m *SSRFModule) Detect(payload mutator.Payload, baseBody string, baseStatus
 	}
 	for _, ind := range internalIndicators {
 		if strings.Contains(strings.ToLower(respBody), ind) && !strings.Contains(strings.ToLower(baseBody), ind) {
+			// Only flag if the payload actually targets internal resources
+			if !strings.Contains(payload.Variant, "internal") && !strings.Contains(payload.Variant, "bypass") &&
+				!strings.Contains(payload.Variant, "localhost") && !strings.Contains(payload.Value, "127.") &&
+				!strings.Contains(payload.Value, "localhost") && !strings.Contains(payload.Value, "0.0.0.0") {
+				continue
+			}
 			sev := "high"
 			if ind == "root:x:0:0" {
 				sev = "critical"

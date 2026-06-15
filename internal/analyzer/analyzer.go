@@ -1,6 +1,8 @@
 package analyzer
 
 import (
+	"sort"
+
 	"github.com/renansj/ryofuzz/internal/engine"
 	"github.com/renansj/ryofuzz/internal/vulns"
 )
@@ -70,11 +72,7 @@ func formatResponse(resp engine.Response) string {
 
 func sortFindings(findings []*vulns.Finding) {
 	sevOrder := map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-	for i := 0; i < len(findings); i++ {
-		for j := i + 1; j < len(findings); j++ {
-			if sevOrder[findings[i].Severity] > sevOrder[findings[j].Severity] {
-				findings[i], findings[j] = findings[j], findings[i]
-			}
-		}
-	}
+	sort.Slice(findings, func(i, j int) bool {
+		return sevOrder[findings[i].Severity] < sevOrder[findings[j].Severity]
+	})
 }

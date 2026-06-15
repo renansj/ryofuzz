@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -627,7 +628,7 @@ doReport:
 func banner() {
 	fmt.Println(`
   ╔═══════════════════════════════════════════╗
-  ║             ryofuzz v0.1.0                ║
+  ║             ryofuzz v0.7.2                ║
   ║    Offensive Web Vulnerability Fuzzer     ║
   ║    github.com/renansj/ryofuzz             ║
   ╚═══════════════════════════════════════════╝`)
@@ -643,7 +644,10 @@ func parseTests(t string) []string {
 
 func expandHome(path string) string {
 	if strings.HasPrefix(path, "~/") {
-		home := "/home/kali"
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = "/tmp"
+		}
 		return home + path[1:]
 	}
 	return path

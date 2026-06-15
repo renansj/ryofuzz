@@ -83,10 +83,16 @@ func Fuzz(cfg Config, points []input.InjectionPoint, payloads []mutator.Payload,
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
-	// Rate limiter
+	// Singleton HTTP client (reuse connections)
+	client := buildClient(cfg)
+
+	// Rate limiter (properly managed ticker)
 	var limiter <-chan time.Time
+	var ticker *time.Ticker
 	if rateLimit > 0 {
-		limiter = time.Tick(time.Second / time.Duration(rateLimit))
+		ticker = time.NewTicker(time.Second / time.Duration(rateLimit))
+		limiter = ticker.C
+		defer ticker.Stop()
 	}
 
 	total := len(payloads)
@@ -106,7 +112,7 @@ func Fuzz(cfg Config, points []input.InjectionPoint, payloads []mutator.Payload,
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result := sendFuzzed(cfg, payload, verbose)
+			result := sendFuzzedWith(client, cfg, payload, verbose)
 
 			mu.Lock()
 			results = append(results, result)
@@ -124,7 +130,10 @@ func Fuzz(cfg Config, points []input.InjectionPoint, payloads []mutator.Payload,
 }
 
 func sendFuzzed(cfg Config, payload mutator.Payload, verbose bool) FuzzResult {
-	client := buildClient(cfg)
+	return sendFuzzedWith(buildClient(cfg), cfg, payload, verbose)
+}
+
+func sendFuzzedWith(client *http.Client, cfg Config, payload mutator.Payload, verbose bool) FuzzResult {
 
 	// Construir request com payload injetado
 	fuzzedURL := cfg.URL
@@ -234,7 +243,7 @@ func buildRequest(cfg Config) (*http.Request, error) {
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", "ryofuzz/0.1.0")
+	req.Header.Set("User-Agent", "ryofuzz/0.7.2")
 
 	// Auto Content-Type
 	if cfg.Body != "" && req.Header.Get("Content-Type") == "" {

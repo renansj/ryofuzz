@@ -92,10 +92,10 @@ func (m *SQLiModule) Detect(payload mutator.Payload, baseBody string, baseStatus
 	if strings.Contains(payload.Variant, "time") && respTime-baseTime > 4500 {
 		return &Finding{
 			Module:      "sqli",
-			Severity:    "critical",
-			Confidence:  "high",
-			Title:       "SQL Injection - Time-based Blind",
-			Description: "Significant delay detected indicating time-based SQL injection",
+			Severity:    "high",
+			Confidence:  "medium",
+			Title:       "SQL Injection - Time-based Blind (unconfirmed)",
+			Description: "Significant delay detected. Requires confirmation with delay=0 to rule out network latency.",
 			Payload:     payload.Value,
 			Point:       payload.Point,
 			Evidence:    fmt.Sprintf("baseline=%dms, response=%dms, delta=%dms", baseTime, respTime, respTime-baseTime),
@@ -112,10 +112,10 @@ func (m *SQLiModule) Detect(payload mutator.Payload, baseBody string, baseStatus
 		if diff > 50 && respStatus == baseStatus {
 			return &Finding{
 				Module:      "sqli",
-				Severity:    "high",
-				Confidence:  "medium",
+				Severity:    "medium",
+				Confidence:  "low",
 				Title:       "SQL Injection - Boolean-based Blind (possible)",
-				Description: "Significant response size difference with boolean SQLi payload",
+				Description: "Response size differs with boolean SQLi payload. Requires TRUE/FALSE pair comparison for confirmation.",
 				Payload:     payload.Value,
 				Point:       payload.Point,
 				Evidence:    fmt.Sprintf("baseline_len=%d, response_len=%d, diff=%d", baseLen, respLen, diff),
