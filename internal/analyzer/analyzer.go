@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/renansj/ryofuzz/internal/engine"
@@ -59,15 +60,22 @@ func Analyze(baseline *engine.Response, results []engine.FuzzResult, modules []v
 }
 
 func formatRequest(result engine.FuzzResult) string {
-	return result.Payload.Point.Method + " → " + result.Payload.Point.Name + "=" + result.Payload.Value
+	method := result.Payload.Point.Method
+	if method == "" {
+		method = "GET"
+	}
+	return fmt.Sprintf("%s %s=%s [%s in %s]",
+		method, result.Payload.Point.Name, result.Payload.Value,
+		result.Payload.Module, result.Payload.Point.Location)
 }
 
 func formatResponse(resp engine.Response) string {
 	body := resp.Body
-	if len(body) > 500 {
-		body = body[:500] + "...[truncated]"
+	if len(body) > 1000 {
+		body = body[:1000] + "...[truncated]"
 	}
-	return resp.Status + " | " + body
+	return fmt.Sprintf("%d %s | %d bytes | %dms\n%s",
+		resp.StatusCode, resp.Status, resp.BodyLength, resp.TimeMs, body)
 }
 
 func sortFindings(findings []*vulns.Finding) {

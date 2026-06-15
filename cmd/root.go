@@ -50,6 +50,7 @@ var (
 	oobDomain string
 	oobListen int
 	oobMode   string
+	oobWait   int
 
 	// Auth
 	authMethod  string
@@ -121,6 +122,7 @@ func init() {
 	rootCmd.Flags().StringVar(&oobDomain, "oob", "", "OOB domain/IP for callbacks (SSRF, XXE, blind)")
 	rootCmd.Flags().IntVar(&oobListen, "oob-listen", 8888, "OOB listener port")
 	rootCmd.Flags().StringVar(&oobMode, "oob-mode", "local", "OOB mode: local, ngrok, private")
+	rootCmd.Flags().IntVar(&oobWait, "oob-wait", 3, "Seconds to wait for OOB callbacks after scan")
 
 	// Auth
 	rootCmd.Flags().StringVar(&authMethod, "auth", "", "Auth method: basic, bearer, form, cookie, custom")
@@ -575,8 +577,8 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// --- OOB callbacks ---
 	if oobManager != nil {
-		fmt.Println("[*] Waiting for OOB callbacks (3s)...")
-		time.Sleep(3 * time.Second)
+		fmt.Printf("[*] Waiting for OOB callbacks (%ds)...\n", oobWait)
+		time.Sleep(time.Duration(oobWait) * time.Second)
 		callbacks := oobManager.GetCallbacks()
 		if len(callbacks) > 0 {
 			fmt.Printf("[+] %d OOB callback(s) received!\n", len(callbacks))
