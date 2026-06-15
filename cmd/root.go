@@ -12,12 +12,14 @@ import (
 	"github.com/renansj/ryofuzz/internal/auth"
 	"github.com/renansj/ryofuzz/internal/authz"
 	"github.com/renansj/ryofuzz/internal/behavioral"
+	"github.com/renansj/ryofuzz/internal/browser"
 	"github.com/renansj/ryofuzz/internal/chain"
 	"github.com/renansj/ryofuzz/internal/confirm"
 	"github.com/renansj/ryofuzz/internal/crawler"
 	"github.com/renansj/ryofuzz/internal/engine"
 	"github.com/renansj/ryofuzz/internal/fuzzer"
 	"github.com/renansj/ryofuzz/internal/input"
+	"github.com/renansj/ryofuzz/internal/llm"
 	"github.com/renansj/ryofuzz/internal/logger"
 	"github.com/renansj/ryofuzz/internal/mutator"
 	"github.com/renansj/ryofuzz/internal/nuclei"
@@ -104,6 +106,14 @@ var (
 
 	// WAF evasion
 	wafEvade bool
+
+	// LLM
+	llmSpec     string
+	llmTriage   bool
+	llmPayloads bool
+
+	// Browser
+	browserScan bool
 )
 
 var rootCmd = &cobra.Command{
@@ -195,6 +205,14 @@ func init() {
 
 	// WAF evasion
 	rootCmd.Flags().BoolVar(&wafEvade, "waf-evade", false, "Adaptive WAF evasion: retry blocked payloads with encoding chains")
+
+	// LLM
+	rootCmd.Flags().StringVar(&llmSpec, "llm", "", "LLM provider spec (e.g. ollama:llama3)")
+	rootCmd.Flags().BoolVar(&llmTriage, "llm-triage", false, "Use LLM to triage findings (filter false positives)")
+	rootCmd.Flags().BoolVar(&llmPayloads, "llm-payloads", false, "Use LLM to generate additional payloads")
+
+	// Browser
+	rootCmd.Flags().BoolVar(&browserScan, "browser", false, "Enable headless browser DOM XSS scanning")
 }
 
 func Execute() error {
@@ -605,6 +623,25 @@ func run(cmd *cobra.Command, args []string) error {
 			allPayloads = append(allPayloads, cvePayloads...)
 		}
 
+		// LLM-assisted payload generation
+		if llmSpec != "" && llmPayloads {
+			llmClient, err := llm.NewClient(llmSpec)
+			if err == nil {
+				for _, point := range points {
+					for _, mod := range modules {
+						extra := llmClient.GeneratePayloads(target, string(point.Location), mod.Name())
+						for _, p := range extra {
+							allPayloads = append(allPayloads, mutator.Payload{
+								Value: p, Point: point, Module: mod.Name(), Variant: "llm",
+							})
+						}
+					}
+				}
+			} else {
+				fmt.Printf("[!] LLM init failed: %v (skipping payload gen)\n", err)
+			}
+		}
+
 		if target == targetURL {
 			fmt.Printf("[*] Total payloads generated: %d (modules=%d, smartgen=%d/point, cve=%s)\n",
 				len(allPayloads), len(modules), 500, cveProbe.ServerHeader)
@@ -828,6 +865,72 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 doReport:
+	// --- LLM Triage ---
+	if llmSpec != "" && llmTriage && len(allFindings) > 0 {
+		llmClient, err := llm.NewClient(llmSpec)
+		if err != nil {
+			fmt.Printf("[!] LLM init failed: %v (skipping triage)\n", err)
+		} else {
+			fmt.Printf("[*] Running LLM triage on %d findings...\n", len(allFindings))
+			var triaged []*vulns.Finding
+			for _, f := range allFindings {
+				isReal, conf, reason := llmClient.TriageFinding(f.Request, f.Response, f.Title)
+				if !isReal {
+					if verbose {
+						fmt.Printf("    [-] FP filtered: %s (%s: %s)\n", f.Title, conf, reason)
+					}
+					continue
+				}
+				if conf != "" {
+					f.Confidence = conf
+				}
+				triaged = append(triaged, f)
+			}
+			fmt.Printf("[+] LLM triage: %d/%d findings kept\n", len(triaged), len(allFindings))
+			allFindings = triaged
+		}
+	}
+
+	// --- Browser DOM XSS ---
+	if browserScan {
+		if !browser.Available() {
+			fmt.Println("[!] Chromium not found or not accessible, skipping browser scan")
+		} else {
+			fmt.Println("[*] Running headless browser DOM XSS scan...")
+			scanner := &browser.DOMScanner{}
+			scanTargets := targets
+			for _, t := range scanTargets {
+				points, err := input.Parse(t, method, body, headers, cookies)
+				if err != nil {
+					continue
+				}
+				var paramNames []string
+				for _, p := range points {
+					paramNames = append(paramNames, p.Name)
+				}
+				if len(paramNames) == 0 {
+					continue
+				}
+				domFindings := scanner.ScanDOMXSS(t, paramNames)
+				for _, df := range domFindings {
+					allFindings = append(allFindings, &vulns.Finding{
+						Module:     "dom",
+						Severity:   browser.FormatSeverity(df.Executed),
+						Confidence: browser.FormatConfidence(df.Executed),
+						Title:      fmt.Sprintf("DOM XSS via %s (sink: %s)", df.Param, df.Sink),
+						Payload:    df.Payload,
+						Evidence:   fmt.Sprintf("URL: %s, Executed: %v", df.URL, df.Executed),
+						OWASP:      "A03:2021 Injection",
+						CWE:        "CWE-79",
+					})
+				}
+				if len(domFindings) > 0 {
+					fmt.Printf("[+] DOM XSS: %d finding(s) on %s\n", len(domFindings), t)
+				}
+			}
+		}
+	}
+
 	// --- Chain detection ---
 	chainFindings := chain.Detect(allFindings)
 	allFindings = append(allFindings, chainFindings...)
