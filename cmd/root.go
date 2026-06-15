@@ -58,6 +58,7 @@ var (
 	followRedir bool
 	rateLimit   int
 	maxRequests int
+	autoMode    bool
 
 	// Output
 	outputFile string
@@ -173,6 +174,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&followRedir, "follow", false, "Follow redirects")
 	rootCmd.Flags().IntVar(&rateLimit, "rate", 0, "Rate limit (requests/segundo, 0=ilimitado)")
 	rootCmd.Flags().IntVar(&maxRequests, "max-requests", 0, "Global cap on total payloads per target (0=unlimited)")
+	rootCmd.Flags().BoolVar(&autoMode, "auto", false, "Auto mode: crawl + all modules + taint + browser + waf-evade + chain")
 
 	// Output
 	rootCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file")
@@ -255,6 +257,24 @@ func Execute() error {
 func run(cmd *cobra.Command, args []string) error {
 	startTime := time.Now()
 	banner()
+
+	// --- Auto mode: enable everything non-destructive against one target ---
+	if autoMode {
+		fmt.Println("[*] AUTO MODE: enabling full scan (crawl + all modules + taint + browser + waf-evade + chain)")
+		if tests == "" || tests == "all" {
+			tests = "all"
+		}
+		crawlMode = true
+		taintScan = true
+		browserScan = true
+		wafEvade = true
+		if maxRequests == 0 {
+			maxRequests = 5000 // sane default budget to avoid explosion
+		}
+		if mode == "" {
+			mode = "smart"
+		}
+	}
 
 	// --- Proxy mode ---
 	if proxyMode {

@@ -100,6 +100,17 @@ ryofuzz -u "http://target/api?id=1&name=test" -t all -c 50
 ryofuzz -u "http://target/api" -d '{"user":"admin","role":"viewer"}' -t sqli,ssti
 ```
 
+### Auto (run everything)
+
+Point it at a target and it enables the full pipeline: crawl, all vulnerability modules, canary/taint propagation, headless browser DOM XSS, adaptive WAF evasion, and chain detection. A request budget is applied by default to avoid explosion.
+
+```bash
+ryofuzz -u "http://target" --auto
+ryofuzz -u "http://target/api?id=1" --auto --max-requests 10000
+```
+
+Equivalent to enabling `--crawl --taint-scan --browser --waf-evade -t all` plus chain detection, with `--max-requests 5000` as the default budget.
+
 ### Payloads / Mutate
 
 `payloads` = only known payloads, no mutations. `mutate` = radamsa-style random mutations only.
@@ -110,7 +121,6 @@ ryofuzz -u "http://target/api" -d '{"data":"test"}' --mode mutate -n 10000
 ```
 
 ### Live Proxy (Burp-style intercept)
-
 Starts a MITM proxy. Point your browser at it and browse normally. Every request that passes through is fuzzed lightly in the background, and passive checks run on every response. Findings stream live as you navigate.
 
 ```bash
@@ -390,6 +400,7 @@ Fuzzing:
       --delay int            Delay between requests in ms
       --rate int             Max requests/second (0=unlimited)
       --max-requests int     Global cap on total payloads per target (0=unlimited)
+      --auto                 Auto mode: crawl + all modules + taint + browser + waf-evade + chain
       --follow               Follow redirects
 
 Output:
