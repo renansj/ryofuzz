@@ -79,6 +79,7 @@ func Select(tests []string) []VulnModule {
 		&XSLTModule{},
 		&SessionModule{},
 		&UserEnumModule{},
+		&ZipSlipModule{},
 	}
 
 	if len(tests) == 1 && tests[0] == "all" {

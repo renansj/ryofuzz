@@ -173,7 +173,7 @@ ryofuzz --openapi app-map.json -t all
 
 This turns casual browsing into a reusable attack surface map. The `--openapi` flag accepts both local file paths and HTTP URLs.
 
-## Vulnerability Modules (42)
+## Vulnerability Modules (48)
 
 | Module | What it tests |
 |--------|---------------|
@@ -220,6 +220,29 @@ This turns casual browsing into a reusable attack surface map. The `--openapi` f
 | `csrf` | Cross-Site Request Forgery (missing anti-CSRF token, missing SameSite) |
 | `takeover` | Subdomain takeover (dangling CNAME fingerprints: S3, GitHub Pages, Heroku, etc) |
 | `saml` | SAML XML Signature Wrapping / auth bypass (XSW, comment injection, unsigned assertion) |
+| `clickjack` | Clickjacking (missing X-Frame-Options and CSP frame-ancestors) |
+| `redos` | Regular Expression Denial of Service (catastrophic backtracking, timing) |
+| `xslt` | XSLT Injection (file read, processor leak, php:function) |
+| `session` | Session management (insecure cookie attributes, low entropy) |
+| `userenum` | Account / username enumeration (verbose distinguishing messages) |
+| `zipslip` | Archive extraction path traversal (malicious zip via multipart) |
+
+Client-side modules (require `--browser`, headless Chromium):
+
+| Module | What it tests |
+|--------|---------------|
+| `dom` | DOM-based XSS (hooks eval/alert/innerHTML/document.write) |
+| `csti` | Client-Side Template Injection (AngularJS/Vue, sandbox escape) |
+| `domclob` | DOM Clobbering (id/name attributes clobbering JS globals) |
+| `postmsg` | postMessage handlers without origin validation |
+| `cspt` | Client-Side Path Traversal (hooks fetch/XHR for ../ in client requests) |
+
+Protocol-level checks (raw socket / dedicated handshake):
+
+| Check | What it tests |
+|-------|---------------|
+| `ws` (CSWSH) | Cross-Site WebSocket Hijacking (forged-Origin handshake) |
+| `smuggling` | HTTP Request Smuggling CL.TE / TE.CL (raw-socket time-based desync) |
 
 ## Features
 
