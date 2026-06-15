@@ -3,3 +3,5 @@ ryofuzz
 dist/
 .ryofuzz-log.jsonl
 .ryofuzz-corpus.json
+ryofuzz-ca.pem
+ryofuzz-ca-key.pem
