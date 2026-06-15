@@ -74,6 +74,11 @@ func Select(tests []string) []VulnModule {
 		&CSRFModule{},
 		&TakeoverModule{},
 		&SAMLModule{},
+		&ClickjackModule{},
+		&ReDoSModule{},
+		&XSLTModule{},
+		&SessionModule{},
+		&UserEnumModule{},
 	}
 
 	if len(tests) == 1 && tests[0] == "all" {
