@@ -82,7 +82,7 @@ ryofuzz -u "http://target/search?q=test" --mode payloads -t xss
 ryofuzz -u "http://target/api" -d '{"data":"test"}' --mode mutate -n 10000
 ```
 
-## Vulnerability Modules (29)
+## Vulnerability Modules (38)
 
 | Module | What it tests |
 |--------|---------------|
@@ -116,6 +116,15 @@ ryofuzz -u "http://target/api" -d '{"data":"test"}' --mode mutate -n 10000
 | `ws` | WebSocket Security |
 | `prompt` | AI/LLM Prompt Injection |
 | `cve` | CVE-aware targeted fuzzing (auto-detects framework from headers) |
+| `cache-deception` | Web Cache Deception (path suffix tricks to cache authenticated pages) |
+| `oauth` | OAuth/OIDC flow attacks (redirect_uri bypass, state missing, PKCE downgrade) |
+| `upload` | File upload bypass (extension tricks, polyglot, SVG XSS, null bytes) |
+| `pwreset` | Password reset poisoning (Host header injection in reset emails) |
+| `hpp` | HTTP Parameter Pollution (duplicate params, array injection) |
+| `csv` | CSV/Formula Injection (DDE, formula injection via =, +, -, @) |
+| `email-inj` | Email Header Injection (CRLF in email fields, BCC injection) |
+| `xssi` | Cross-Site Script Inclusion (JSONP data leak, callback injection) |
+| `el` | Expression Language Injection (SpEL, OGNL, MVEL, JEXL, JSP EL) |
 
 ## Features
 
@@ -370,6 +379,51 @@ ryofuzz -u "http://target/webhook" -d '{"url":"http://x.com"}' \
 ```
 
 The server generates unique tokens per payload. When the target makes an outbound request to the listener, the callback is correlated with the exact payload that triggered it, producing a confirmed critical finding.
+
+### Chain detection
+
+Post-scan, ryofuzz correlates findings to detect attack chains with elevated severity:
+- SSRF + metadata access = Cloud credential theft (critical)
+- Open Redirect + OAuth flow = Account takeover (critical)
+- XSS + CORS misconfiguration = Cross-origin data theft (critical)
+- SQL injection + IDOR = Mass data exfiltration (critical)
+- Prototype pollution = Potential RCE via template gadgets (critical)
+
+Chain findings are appended automatically with `[CHAIN]` prefix.
+
+### Canary propagation (stored/second-order detection)
+
+Injects unique canary strings into every parameter, then scans all other responses for their presence. If a canary injected at endpoint A appears in the response of endpoint B, it indicates stored/second-order injection.
+
+```bash
+ryofuzz -u "http://target/api" -t all --taint-scan --crawl
+```
+
+### Differential authorization testing
+
+Sends the same requests with multiple identities and compares results to detect IDOR, broken authentication, and privilege escalation:
+
+```bash
+ryofuzz -u "http://target/api/users/1" --mode authz \
+  --authz-identities "anon:" \
+  --authz-identities "userA:Authorization:Bearer TOKEN_A" \
+  --authz-identities "admin:Authorization:Bearer TOKEN_ADMIN"
+```
+
+### OpenAPI/Swagger import
+
+Auto-discovers all endpoints and parameters from an OpenAPI spec:
+
+```bash
+ryofuzz --openapi https://target/swagger.json -t all
+```
+
+### SARIF output (CI/CD integration)
+
+```bash
+ryofuzz -u "http://target" -t all --format sarif -o results.sarif
+# Upload to GitHub Security tab via github/codeql-action/upload-sarif
+```
 
 ## Architecture
 
