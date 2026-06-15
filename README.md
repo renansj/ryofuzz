@@ -135,6 +135,12 @@ What it does per request:
 
 Press Ctrl+C to stop. A full findings summary prints on exit.
 
+By default the proxy actively probes every host you browse. To avoid hitting out-of-scope third parties (CDNs, analytics, payment providers), restrict active fuzzing with `--proxy-scope`. Passive endpoint mapping still records all traffic; only active probing is gated.
+
+```bash
+ryofuzz --proxy-mode --proxy-scope target.com --proxy-scope api.target.com
+```
+
 #### Passive endpoint mapping (recon)
 
 While you browse, the proxy also records every endpoint into an OpenAPI 3.0 specification. On exit it writes the spec to `ryofuzz-endpoints.json` (configurable with `--proxy-endpoints`). The recorder:
@@ -379,6 +385,7 @@ Fuzzing:
       --timeout int          Request timeout in seconds (default 15)
       --delay int            Delay between requests in ms
       --rate int             Max requests/second (0=unlimited)
+      --max-requests int     Global cap on total payloads per target (0=unlimited)
       --follow               Follow redirects
 
 Output:
@@ -428,6 +435,7 @@ Live Proxy:
       --proxy-port int           Proxy listen port (default 8081)
       --proxy-ca string          Path to export CA cert for browser trust (default "ryofuzz-ca.pem")
       --proxy-endpoints string   Path to export discovered endpoints as OpenAPI spec (default "ryofuzz-endpoints.json")
+      --proxy-scope strings      Restrict active fuzzing to these hosts (repeatable). Recon maps all traffic.
 
 DNS OOB:
       --oob-dns int          UDP port for DNS OOB listener (0=disabled)
