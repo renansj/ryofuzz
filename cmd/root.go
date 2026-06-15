@@ -93,7 +93,8 @@ Performs behavioral differential analysis to identify vulnerabilities.
 
 Modules: sqli, xss, ssti, ssrf, cmdi, lfi, nosqli, xxe, idor, redirect, crlf,
          prototype, jwt, mass-assign, race, smuggling, cors, csp, graphql,
-         deser, ldapi, xpathi, logic, ratelimit, verb, hostheader, cache, ws, prompt
+         deser, ldapi, xpathi, logic, ratelimit, verb, hostheader, cache, ws, prompt,
+         cache-deception, oauth, upload, pwreset, hpp, csv, email-inj, xssi, el
 
 Author: RyoSec (github.com/renansj)`,
 	RunE: run,

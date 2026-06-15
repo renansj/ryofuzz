@@ -61,6 +61,15 @@ func Select(tests []string) []VulnModule {
 		&CachePoisonModule{},
 		&WebSocketModule{},
 		&PromptInjectionModule{},
+		&CacheDeceptionModule{},
+		&OAuthModule{},
+		&UploadModule{},
+		&PwResetModule{},
+		&HPPModule{},
+		&CSVInjectModule{},
+		&EmailInjectModule{},
+		&XSSIModule{},
+		&ELInjectModule{},
 	}
 
 	if len(tests) == 1 && tests[0] == "all" {
