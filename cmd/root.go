@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/renansj/ryofuzz/internal/analyzer"
@@ -25,6 +27,7 @@ import (
 	"github.com/renansj/ryofuzz/internal/nuclei"
 	"github.com/renansj/ryofuzz/internal/oob"
 	"github.com/renansj/ryofuzz/internal/plugins"
+	proxymod "github.com/renansj/ryofuzz/internal/proxy"
 	"github.com/renansj/ryofuzz/internal/race"
 	"github.com/renansj/ryofuzz/internal/reporter"
 	"github.com/renansj/ryofuzz/internal/schema"
@@ -122,6 +125,11 @@ var (
 
 	// Race single-packet
 	raceSinglepacket int
+
+	// Proxy mode
+	proxyMode bool
+	proxyPort int
+	proxyCA   string
 )
 
 var rootCmd = &cobra.Command{
@@ -227,6 +235,11 @@ func init() {
 
 	// Race single-packet
 	rootCmd.Flags().IntVar(&raceSinglepacket, "race-singlepacket", 0, "Single-packet race attack parallel requests (0=disabled)")
+
+	// Proxy mode
+	rootCmd.Flags().BoolVar(&proxyMode, "proxy-mode", false, "Start in live proxy fuzzing mode (MITM intercept + scan)")
+	rootCmd.Flags().IntVar(&proxyPort, "proxy-port", 8081, "Proxy listen port")
+	rootCmd.Flags().StringVar(&proxyCA, "proxy-ca", "ryofuzz-ca.pem", "Path to export CA cert for browser trust")
 }
 
 func Execute() error {
@@ -236,6 +249,11 @@ func Execute() error {
 func run(cmd *cobra.Command, args []string) error {
 	startTime := time.Now()
 	banner()
+
+	// --- Proxy mode ---
+	if proxyMode {
+		return runProxyMode()
+	}
 
 	// Multi-target: read from stdin if -u not provided
 	if targetURL == "" {
@@ -1079,4 +1097,61 @@ func expandHome(path string) string {
 		return home + path[1:]
 	}
 	return path
+}
+
+func runProxyMode() error {
+	addr := fmt.Sprintf("127.0.0.1:%d", proxyPort)
+	p, err := proxymod.NewProxy(addr)
+	if err != nil {
+		return fmt.Errorf("failed to create proxy: %w", err)
+	}
+
+	if err := p.ExportCA(proxyCA); err != nil {
+		return fmt.Errorf("failed to export CA: %w", err)
+	}
+
+	// Live finding output
+	p.OnFinding = func(f *vulns.Finding) {
+		sevColors := map[string]string{
+			"critical": "\033[91m[CRITICAL]\033[0m",
+			"high":     "\033[31m[HIGH]\033[0m",
+			"medium":   "\033[33m[MEDIUM]\033[0m",
+			"low":      "\033[34m[LOW]\033[0m",
+			"info":     "\033[36m[INFO]\033[0m",
+		}
+		sev := sevColors[f.Severity]
+		if sev == "" {
+			sev = "[" + strings.ToUpper(f.Severity) + "]"
+		}
+		fmt.Printf("  %s %s | %s\n", sev, f.Title, f.Evidence)
+	}
+
+	fmt.Println("[*] Live Proxy Fuzzing Mode")
+	fmt.Printf("[*] Listening on %s\n", addr)
+	fmt.Printf("[*] CA certificate exported to: %s\n", proxyCA)
+	fmt.Println("")
+	fmt.Println("  Configure your browser proxy to: 127.0.0.1:" + fmt.Sprint(proxyPort))
+	fmt.Printf("  Install %s as a trusted CA in your browser/OS\n", proxyCA)
+	fmt.Println("  Then browse normally. Findings will stream below.")
+	fmt.Println("")
+	fmt.Println("[*] Press Ctrl+C to stop and show summary.")
+	fmt.Println("")
+
+	// Signal handling
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		if err := p.Start(); err != nil {
+			fmt.Printf("[-] Proxy error: %v\n", err)
+			sig <- syscall.SIGTERM
+		}
+	}()
+
+	<-sig
+	fmt.Println("\n[*] Shutting down proxy...")
+
+	findings := p.Findings()
+	reporter.Report(findings, format, outputFile, verbose)
+	return nil
 }
