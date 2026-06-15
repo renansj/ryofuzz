@@ -1,3 +1,5 @@
 ryofuzz
 *.exe
 dist/
+.ryofuzz-log.jsonl
+.ryofuzz-corpus.json
