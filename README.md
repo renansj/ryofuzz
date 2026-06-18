@@ -10,6 +10,8 @@ Offensive web vulnerability fuzzer. Discovers unknown bugs through behavioral an
   ╚═══════════════════════════════════════════╝
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
+
 ## What makes it different
 
 Most scanners check for known vulnerabilities. ryofuzz discovers unknown ones.
@@ -65,6 +67,7 @@ git clone https://github.com/renansj/ryofuzz.git && cd ryofuzz
 go build -ldflags="-s -w" -o ryofuzz . && sudo mv ryofuzz /usr/local/bin/
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 Requires Go 1.22+. Headless browser mode requires Chromium installed.
 
 ## Modes
@@ -82,6 +85,7 @@ ryofuzz -u "http://target/api?url=http://example.com" --mode behavioral
 ryofuzz -u "http://target/search?q=test" --mode behavioral
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### Guided (AFL++ for web)
 
 Coverage-guided evolutionary fuzzing. Keeps inputs that trigger new server behaviors, mutates those further. Gets smarter over time.
@@ -91,6 +95,7 @@ ryofuzz -u "http://target/api?id=1" --mode guided -n 10000 -c 50
 ryofuzz -u "http://target/api" -d '{"user":"test"}' --mode guided -n 50000
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### Smart (default)
 
 Known payloads + type-aware smart generation + behavioral differential analysis. Good balance of speed and coverage.
@@ -100,6 +105,7 @@ ryofuzz -u "http://target/api?id=1&name=test" -t all -c 50
 ryofuzz -u "http://target/api" -d '{"user":"admin","role":"viewer"}' -t sqli,ssti
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### Auto (run everything)
 
 Point it at a target and it enables the full pipeline: crawl, all vulnerability modules, canary/taint propagation, headless browser DOM XSS, adaptive WAF evasion, and chain detection. A request budget is applied by default to avoid explosion.
@@ -109,6 +115,7 @@ ryofuzz -u "http://target" --auto
 ryofuzz -u "http://target/api?id=1" --auto --max-requests 10000
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 Equivalent to enabling `--crawl --taint-scan --browser --waf-evade -t all` plus chain detection, with `--max-requests 5000` as the default budget.
 
 ### Payloads / Mutate
@@ -120,6 +127,7 @@ ryofuzz -u "http://target/search?q=test" --mode payloads -t xss
 ryofuzz -u "http://target/api" -d '{"data":"test"}' --mode mutate -n 10000
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### Live Proxy (Burp-style intercept)
 Starts a MITM proxy. Point your browser at it and browse normally. Every request that passes through is fuzzed lightly in the background, and passive checks run on every response. Findings stream live as you navigate.
 
@@ -131,6 +139,7 @@ ryofuzz --proxy-mode
 ryofuzz --proxy-mode --proxy-port 8888 --proxy-ca /tmp/ryofuzz-ca.pem
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 Setup:
 1. Run the command above. It generates a CA certificate (`ryofuzz-ca.pem`).
 2. Set your browser HTTP/HTTPS proxy to `127.0.0.1:8081`.
@@ -151,6 +160,7 @@ By default the proxy actively probes every host you browse. To avoid hitting out
 ryofuzz --proxy-mode --proxy-scope target.com --proxy-scope api.target.com
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 #### Passive endpoint mapping (recon)
 
 While you browse, the proxy also records every endpoint into an OpenAPI 3.0 specification. On exit it writes the spec to `ryofuzz-endpoints.json` (configurable with `--proxy-endpoints`). The recorder:
@@ -171,6 +181,7 @@ ryofuzz --proxy-mode --proxy-endpoints app-map.json
 ryofuzz --openapi app-map.json -t all
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 This turns casual browsing into a reusable attack surface map. The `--openapi` flag accepts both local file paths and HTTP URLs.
 
 ## Vulnerability Modules (48)
@@ -304,6 +315,7 @@ ryofuzz -u "http://target/api" -t ssrf --oob auto --oob-mode ngrok
 ryofuzz -u "http://10.10.10.50/api?file=x" -t ssrf --oob 10.10.14.5:8888 --oob-mode private
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### Web crawler
 
 Discovers endpoints before fuzzing:
@@ -312,6 +324,7 @@ Discovers endpoints before fuzzing:
 ryofuzz -u "http://target" --crawl --crawl-depth 3 -t all
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 Extracts: links, forms, API routes from JavaScript, sitemap.xml, robots.txt.
 
 ### Authentication
@@ -332,6 +345,7 @@ ryofuzz -u "http://target/api" -t all --auth basic --auth-user admin --auth-pass
 ryofuzz -u "http://target/api" -t all --auth custom --auth-token "sk-xxx" --auth-header "X-API-Key"
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 Auto-refreshes when session expires (detects 401/403).
 
 ### Nuclei template compatibility
@@ -355,6 +369,7 @@ ryofuzz -u "http://target" -t all --nuclei-templates ~/nuclei-templates/http/ --
 ryofuzz -u "http://target" --nuclei-templates ~/nuclei-templates/http/ --nuclei-report-skipped
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 Engine capabilities:
 
 - Matchers: word, regex, status, size, binary, dsl, xpath, with case-insensitive, match-all, and/or conditions, negative, internal, and parts body/header/all/raw/status
@@ -379,6 +394,7 @@ RYOFUZZ_DIFF_TARGET=http://target RYOFUZZ_DIFF_TEMPLATES=~/nuclei-templates/http
   go test ./internal/nuclei/ -run TestDifferentialVsNuclei -v
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### Plugin system
 
 Extend with custom YAML checks:
@@ -400,10 +416,12 @@ detection:
     - "mysql"
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ```bash
 ryofuzz -u "http://target" --plugins-dir ./my-plugins -t all
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### Output formats
 
 ```bash
@@ -420,6 +438,7 @@ ryofuzz -u "http://target" -t all --format markdown -o report.md
 ryofuzz -u "http://target" -t all --format html -o report.html
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### Proxy support
 
 Route traffic through Burp Suite or ZAP:
@@ -428,6 +447,7 @@ Route traffic through Burp Suite or ZAP:
 ryofuzz -u "http://target/api?id=1" -t all --proxy http://127.0.0.1:8080
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ## Full CLI reference
 
 ```
@@ -519,6 +539,7 @@ Other:
       --proxy string         HTTP proxy for outbound traffic (e.g., http://127.0.0.1:8080)
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ## Detection quality
 
 ### Confirmation loops (false positive reduction)
@@ -543,6 +564,7 @@ ryofuzz -u "http://target/api?id=1" --mode guided -n 10000
 ryofuzz -u "http://target/api?id=1" --mode guided -n 50000
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### OOB callbacks for blind detection
 
 Built-in HTTP listener with token correlation for blind SSRF, XXE, and RFI:
@@ -552,6 +574,7 @@ ryofuzz -u "http://target/webhook" -d '{"url":"http://x.com"}' \
   -t ssrf --oob 10.10.14.5:8888 --oob-listen 8888 --oob-mode private --oob-wait 10
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 The server generates unique tokens per payload. When the target makes an outbound request to the listener, the callback is correlated with the exact payload that triggered it, producing a confirmed critical finding.
 
 ### Chain detection
@@ -573,6 +596,7 @@ Injects unique canary strings into every parameter, then scans all other respons
 ryofuzz -u "http://target/api" -t all --taint-scan --crawl
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### Differential authorization testing
 
 Sends the same requests with multiple identities and compares results to detect IDOR, broken authentication, and privilege escalation:
@@ -584,6 +608,7 @@ ryofuzz -u "http://target/api/users/1" --mode authz \
   --authz-identities "admin:Authorization:Bearer TOKEN_ADMIN"
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### OpenAPI/Swagger import
 
 Auto-discovers all endpoints and parameters from an OpenAPI spec:
@@ -592,6 +617,7 @@ Auto-discovers all endpoints and parameters from an OpenAPI spec:
 ryofuzz --openapi https://target/swagger.json -t all
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### SARIF output (CI/CD integration)
 
 ```bash
@@ -599,6 +625,7 @@ ryofuzz -u "http://target" -t all --format sarif -o results.sarif
 # Upload to GitHub Security tab via github/codeql-action/upload-sarif
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### Headless browser DOM XSS
 
 Launches headless Chromium, hooks `eval`, `alert`, `document.write`, and `innerHTML`, then injects canary payloads into query params and URL fragments. Confirms client-side execution rather than just reflection. Requires Chromium installed.
@@ -608,6 +635,7 @@ ryofuzz -u "http://target/page?q=test" --browser
 ryofuzz -u "http://target" --crawl --browser
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### Single-packet race attack (HTTP/2)
 
 Fires N requests in a synchronized burst so they arrive at the server simultaneously, eliminating network jitter. Detects TOCTOU race conditions that normal concurrency misses: coupon reuse, balance bypass, double-spend.
@@ -617,6 +645,7 @@ Fires N requests in a synchronized burst so they arrive at the server simultaneo
 ryofuzz -u "http://target/api/redeem-coupon" -d '{"code":"SAVE10"}' --race-singlepacket 20
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 If multiple requests succeed where only one should, a race condition is flagged.
 
 ### Stateful workflow fuzzing
@@ -627,6 +656,7 @@ Models multi-step flows (login, create, read, delete) and fuzzes the transitions
 ryofuzz --workflow examples/workflow-checkout.yaml
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 Workflow YAML format:
 
 ```yaml
@@ -644,6 +674,7 @@ steps:
     assert_logic: [total_not_negative, qty_positive, status_ok]
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 State carries across steps via cookie jar and `{{varname}}` substitution from `extract`.
 
 ### DNS OOB listener
@@ -655,6 +686,7 @@ ryofuzz -u "http://target/api" -t ssrf,xxe \
   --oob 10.10.14.5:8888 --oob-dns 53 --oob-mode private
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 Requires a domain whose NS points to your listener, or a target that resolves DNS against you.
 
 ### Adaptive WAF evasion
@@ -665,6 +697,7 @@ Detects the WAF (Cloudflare, AWS WAF, Akamai, ModSecurity, Imperva) from blockin
 ryofuzz -u "http://target/api?id=1" -t sqli,xss --waf-evade
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ### LLM-assisted (optional)
 
 Uses a local Ollama model (or compatible API) for contextual payload generation and false positive triage. Degrades gracefully if the model is unavailable.
@@ -677,6 +710,7 @@ ryofuzz -u "http://target/api?id=1" -t all --llm ollama:llama3 --llm-payloads
 ryofuzz -u "http://target/api?id=1" -t all --llm ollama:llama3 --llm-triage
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ## Architecture
 
 ```
@@ -713,6 +747,7 @@ ryofuzz/
 └── plugins/                     # Example custom checks
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ## Examples
 
 ```bash
@@ -793,6 +828,7 @@ ryofuzz -u "http://target/api?id=1" -t sqli,xss --waf-evade
 ryofuzz -u "http://target/api?id=1" -t all --llm ollama:llama3 --llm-payloads --llm-triage
 ```
 
+![ryofuzz demo](./ryofuzz-demo.gif)
 ## Disclaimer
 
 For authorized security testing and CTF challenges only. Do not use against systems without explicit permission.
