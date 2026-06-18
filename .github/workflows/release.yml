@@ -111,6 +111,18 @@ jobs:
             echo "EOF"
           } >> $GITHUB_OUTPUT
 
+      - name: Update README version
+        if: steps.changes.outputs.skip == 'false'
+        run: |
+          VERSION=${{ steps.version.outputs.new_version }}
+          sed -i "s/ryofuzz v[0-9]*\.[0-9]*\.[0-9]*/ryofuzz $VERSION/g" README.md
+          sed -i "s/What is new in v[0-9]*\.[0-9]*\.[0-9]*/What is new in $VERSION/" README.md
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --quiet || git commit -m "docs: bump README version to $VERSION [skip ci]"
+          git push
+
       - name: Build binaries
         if: steps.changes.outputs.skip == 'false'
         run: |
