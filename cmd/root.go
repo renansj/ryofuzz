@@ -1255,7 +1255,7 @@ doReport:
 			StartTime:     startTime,
 			Duration:      duration,
 			TotalRequests: totalRequests,
-			Version:       "1.0.0",
+			Version:       appVersion,
 		}
 		outFile := outputFile
 		if outFile == "" {
@@ -1284,13 +1284,12 @@ doReport:
 }
 
 func banner() {
-	fmt.Println(`
+	fmt.Printf(`
   ╔═══════════════════════════════════════════╗
-  ║             ryofuzz v1.0.0                ║
+  ║             ryofuzz %-21s ║
   ║    Offensive Web Vulnerability Fuzzer     ║
   ║    github.com/renansj/ryofuzz             ║
-  ╚═══════════════════════════════════════════╝`)
-	fmt.Println()
+  ╚═══════════════════════════════════════════╝`+"\n\n", appVersion)
 }
 
 func parseTests(t string) []string {
