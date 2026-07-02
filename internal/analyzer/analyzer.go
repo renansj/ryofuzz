@@ -208,8 +208,7 @@ func formatResponse(resp engine.Response) string {
 }
 
 func sortFindings(findings []*vulns.Finding) {
-	sevOrder := map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 	sort.Slice(findings, func(i, j int) bool {
-		return sevOrder[findings[i].Severity] < sevOrder[findings[j].Severity]
+		return vulns.SeverityRank(findings[i].Severity) < vulns.SeverityRank(findings[j].Severity)
 	})
 }
