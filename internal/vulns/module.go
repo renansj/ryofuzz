@@ -1,6 +1,8 @@
 package vulns
 
 import (
+	"strings"
+
 	"github.com/renansj/ryofuzz/internal/input"
 	"github.com/renansj/ryofuzz/internal/mutator"
 )
@@ -29,71 +31,43 @@ type Finding struct {
 	Response    string
 }
 
-// Select retorna os módulos selecionados
+// Select returns the modules matching the given selectors. Selectors may be:
+//   - "all": every registered module
+//   - a module name: "sqli", "xss", ...
+//   - a tag selector: "tag:injection", "tag:safe", ...
+//
+// Backed by the module registry (review A4) so adding a module means one
+// register() call, not editing this function.
 func Select(tests []string) []VulnModule {
-	all := []VulnModule{
-		&SQLiModule{},
-		&XSSModule{},
-		&SSTIModule{},
-		&SSRFModule{},
-		&CMDiModule{},
-		&LFIModule{},
-		&NoSQLiModule{},
-		&XXEModule{},
-		&IDORModule{},
-		&OpenRedirectModule{},
-		&CRLFModule{},
-		&PrototypePollutionModule{},
-		&JWTModule{},
-		&MassAssignmentModule{},
-		&RaceConditionModule{},
-		&HTTPSmugglingModule{},
-		&CORSModule{},
-		&CSPBypassModule{},
-		&GraphQLModule{},
-		&DeserializationModule{},
-		&LDAPiModule{},
-		&XPathiModule{},
-		&BusinessLogicModule{},
-		&RateLimitModule{},
-		&VerbTamperModule{},
-		&HostHeaderModule{},
-		&CachePoisonModule{},
-		&WebSocketModule{},
-		&PromptInjectionModule{},
-		&CacheDeceptionModule{},
-		&OAuthModule{},
-		&UploadModule{},
-		&PwResetModule{},
-		&HPPModule{},
-		&CSVInjectModule{},
-		&EmailInjectModule{},
-		&XSSIModule{},
-		&ELInjectModule{},
-		&InfoLeakModule{},
-		&CSRFModule{},
-		&TakeoverModule{},
-		&SAMLModule{},
-		&ClickjackModule{},
-		&ReDoSModule{},
-		&XSLTModule{},
-		&SessionModule{},
-		&UserEnumModule{},
-		&ZipSlipModule{},
+	if len(tests) == 1 && tests[0] == "all" {
+		return AllModules()
 	}
 
-	if len(tests) == 1 && tests[0] == "all" {
-		return all
+	testMap := make(map[string]bool)
+	var tagFilters []Tag
+	for _, t := range tests {
+		if suffix, ok := strings.CutPrefix(t, "tag:"); ok {
+			tagFilters = append(tagFilters, Tag(suffix))
+			continue
+		}
+		testMap[t] = true
 	}
 
 	var selected []VulnModule
-	testMap := make(map[string]bool)
-	for _, t := range tests {
-		testMap[t] = true
-	}
-	for _, m := range all {
-		if testMap[m.Name()] {
-			selected = append(selected, m)
+	seen := make(map[string]bool)
+	for _, r := range registry {
+		match := testMap[r.name]
+		if !match {
+			for _, tf := range tagFilters {
+				if r.hasTag(tf) {
+					match = true
+					break
+				}
+			}
+		}
+		if match && !seen[r.name] {
+			seen[r.name] = true
+			selected = append(selected, r.factory())
 		}
 	}
 	return selected
