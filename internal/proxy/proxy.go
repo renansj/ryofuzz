@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/renansj/ryofuzz/internal/httpx"
 	"github.com/renansj/ryofuzz/internal/input"
 	"github.com/renansj/ryofuzz/internal/util"
 	"github.com/renansj/ryofuzz/internal/vulns"
@@ -219,7 +220,7 @@ func (p *Proxy) proxyAndFuzz(w http.ResponseWriter, r *http.Request) {
 	}
 	outReq.Header.Del("Proxy-Connection")
 
-	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+	client := httpx.New(httpx.Options{TimeoutSec: 15, InsecureSkipVerify: true})
 	resp, err := client.Do(outReq)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -324,7 +325,7 @@ func (p *Proxy) lightFuzz(r *http.Request, reqBody []byte, origResp *http.Respon
 					req2.Header.Add(k, v)
 				}
 			}
-			client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+			client := httpx.New(httpx.Options{TimeoutSec: 10, InsecureSkipVerify: true})
 			resp2, err := client.Do(req2)
 			if err != nil {
 				continue

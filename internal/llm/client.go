@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
+
+	"github.com/renansj/ryofuzz/internal/httpx"
 )
 
 // Client for LLM inference via Ollama local API
@@ -27,7 +28,7 @@ func NewClient(spec string) (*Client, error) {
 		provider:   parts[0],
 		model:      parts[1],
 		baseURL:    "http://localhost:11434",
-		httpClient: &http.Client{Timeout: 120 * time.Second},
+		httpClient: httpx.New(httpx.Options{TimeoutSec: 120}),
 	}, nil
 }
 

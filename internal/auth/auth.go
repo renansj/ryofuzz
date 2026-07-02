@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/renansj/ryofuzz/internal/httpx"
 	"github.com/renansj/ryofuzz/internal/util"
 )
 
@@ -39,7 +40,7 @@ type Session struct {
 func Login(config AuthConfig) (*Session, error) {
 	s := &Session{
 		Config: config,
-		Client: &http.Client{Timeout: 10 * time.Second},
+		Client: httpx.New(httpx.Options{TimeoutSec: 10, InsecureSkipVerify: true}),
 	}
 
 	switch config.Method {

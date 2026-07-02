@@ -8,8 +8,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"time"
 
+	"github.com/renansj/ryofuzz/internal/httpx"
 	"github.com/renansj/ryofuzz/internal/util"
 	"gopkg.in/yaml.v3"
 )
@@ -180,7 +180,7 @@ func runStrategy(strat string, client *http.Client, wf *Workflow, stepIdx int, v
 
 	case "skip_auth":
 		// Try without cookies/auth headers
-		noAuthClient := &http.Client{Timeout: 10 * time.Second}
+		noAuthClient := httpx.New(httpx.Options{TimeoutSec: 10, InsecureSkipVerify: true})
 		resp, body := execStep(noAuthClient, step, vars)
 		if resp != nil && resp.StatusCode < 400 {
 			findings = append(findings, WorkflowFinding{

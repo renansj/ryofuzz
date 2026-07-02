@@ -3,8 +3,8 @@ package oob
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"time"
+
+	"github.com/renansj/ryofuzz/internal/httpx"
 )
 
 const ngrokAPIURL = "http://127.0.0.1:4040/api/tunnels"
@@ -12,13 +12,13 @@ const ngrokAPIURL = "http://127.0.0.1:4040/api/tunnels"
 type ngrokTunnels struct {
 	Tunnels []struct {
 		PublicURL string `json:"public_url"`
-		Proto    string `json:"proto"`
+		Proto     string `json:"proto"`
 	} `json:"tunnels"`
 }
 
 // GetNgrokURL queries the local ngrok API and returns the public tunnel URL.
 func GetNgrokURL() (string, error) {
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := httpx.New(httpx.Options{TimeoutSec: 3})
 	resp, err := client.Get(ngrokAPIURL)
 	if err != nil {
 		return "", fmt.Errorf("cannot connect to ngrok API at %s: %w\nStart ngrok with: ngrok http <port>", ngrokAPIURL, err)
