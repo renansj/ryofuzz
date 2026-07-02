@@ -12,28 +12,31 @@ permissions:
 jobs:
   security-scan:
     runs-on: ubuntu-latest
-    # Advisory only - offensive security tools intentionally use patterns
-    # that static analyzers flag (InsecureSkipVerify, unhandled errors in
-    # HTTP writes, permissive file modes for reports, etc.)
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
 
+      # A vulnerable dependency must fail the build (H1). No || true here.
       - name: govulncheck (dependency vulnerabilities)
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./... || true
+          govulncheck ./...
 
-      - name: gosec (static analysis)
-        run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec -exclude=G101,G104,G304,G306,G402,G501 -severity medium ./... || true
-
+      # go vet is a correctness gate and must fail the build (H1).
       - name: go vet
         run: go vet ./...
+
+      # gosec stays advisory: an offensive tool intentionally uses patterns
+      # static analyzers flag (InsecureSkipVerify for pentest targets, permissive
+      # file modes for reports). G104 (unhandled errors) is NOT excluded so that
+      # ignored read/parse errors surface. Advisory only via continue-on-error.
+      - name: gosec (static analysis, advisory)
+        continue-on-error: true
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec -exclude=G101,G304,G306,G402,G501 -severity medium ./...
 
       - name: Build verification
         run: go build -o /dev/null .
