@@ -1,6 +1,7 @@
 package race
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -24,7 +25,7 @@ type RaceResult struct {
 
 // Attack performs a synchronized burst race attack using a barrier pattern.
 // All N goroutines prepare requests and fire simultaneously after barrier release.
-func (s *SinglePacketAttack) Attack(targetURL string, method string, body string, headers map[string]string, count int) []RaceResult {
+func (s *SinglePacketAttack) Attack(ctx context.Context, targetURL string, method string, body string, headers map[string]string, count int) []RaceResult {
 	results := make([]RaceResult, count)
 	var wg sync.WaitGroup
 	var barrier sync.WaitGroup
@@ -39,7 +40,7 @@ func (s *SinglePacketAttack) Attack(targetURL string, method string, body string
 
 	// Warm up connections
 	for i := 0; i < count; i++ {
-		req, _ := http.NewRequest("HEAD", targetURL, nil)
+		req, _ := http.NewRequestWithContext(ctx, "HEAD", targetURL, nil)
 		resp, err := client.Do(req)
 		if err == nil {
 			resp.Body.Close()
@@ -54,7 +55,7 @@ func (s *SinglePacketAttack) Attack(targetURL string, method string, body string
 			if body != "" {
 				bodyReader = strings.NewReader(body)
 			}
-			req, err := http.NewRequest(method, targetURL, bodyReader)
+			req, err := http.NewRequestWithContext(ctx, method, targetURL, bodyReader)
 			if err != nil {
 				results[idx] = RaceResult{Index: idx, StatusCode: -1}
 				return

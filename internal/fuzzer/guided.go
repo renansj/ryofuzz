@@ -1,6 +1,7 @@
 package fuzzer
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
@@ -42,6 +43,7 @@ type CoverageGuidedFuzzer struct {
 	mu          sync.Mutex
 	client      *http.Client
 	rng         *rand.Rand
+	ctx         context.Context
 
 	// Callbacks
 	OnNewCoverage func(entry CorpusEntry)
@@ -98,6 +100,7 @@ type Config struct {
 	MaxExecs    int64         // 0 = unlimited
 	MaxTime     time.Duration // 0 = unlimited
 	MaxDepth    int           // max mutation chain depth
+	Ctx         context.Context
 }
 
 func New(cfg Config) *CoverageGuidedFuzzer {
@@ -111,6 +114,7 @@ func New(cfg Config) *CoverageGuidedFuzzer {
 		Timeout:     cfg.Timeout,
 		Points:      cfg.Points,
 		Concurrency: cfg.Concurrency,
+		ctx:         cfg.Ctx,
 		corpus:      make([]CorpusEntry, 0),
 		coverageMap: make(map[string]bool),
 		queue:       make([]CorpusEntry, 0),
@@ -143,6 +147,9 @@ func (f *CoverageGuidedFuzzer) Fuzz(maxExecs int64, maxTime time.Duration) []Cor
 	// Phase 2: Evolutionary loop
 	for {
 		// Check termination conditions
+		if f.context().Err() != nil {
+			break
+		}
 		if maxExecs > 0 && f.stats.TotalExecs >= maxExecs {
 			break
 		}
@@ -584,9 +591,9 @@ func (f *CoverageGuidedFuzzer) buildRequest(value string, point input.InjectionP
 	var req *http.Request
 	var err error
 	if bodyReader != nil {
-		req, err = http.NewRequest(method, url, bodyReader)
+		req, err = http.NewRequestWithContext(f.context(), method, url, bodyReader)
 	} else {
-		req, err = http.NewRequest(method, url, nil)
+		req, err = http.NewRequestWithContext(f.context(), method, url, nil)
 	}
 	if err != nil {
 		return nil
@@ -621,6 +628,14 @@ func (f *CoverageGuidedFuzzer) getClient() *http.Client {
 		InsecureSkipVerify: true,
 	})
 	return f.client
+}
+
+// context returns the fuzzer context, defaulting to Background when unset.
+func (f *CoverageGuidedFuzzer) context() context.Context {
+	if f.ctx == nil {
+		return context.Background()
+	}
+	return f.ctx
 }
 
 func (f *CoverageGuidedFuzzer) generateSeeds() []struct {

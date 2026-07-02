@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,7 +55,7 @@ func LoadWorkflow(path string) (*Workflow, error) {
 	return &wf, nil
 }
 
-func Run(wf *Workflow, client *http.Client) []WorkflowFinding {
+func Run(ctx context.Context, wf *Workflow, client *http.Client) []WorkflowFinding {
 	var findings []WorkflowFinding
 	vars := make(map[string]string)
 
@@ -65,7 +66,7 @@ func Run(wf *Workflow, client *http.Client) []WorkflowFinding {
 
 	// Normal execution to build state
 	for i, step := range wf.Steps {
-		resp, body := execStep(client, step, vars)
+		resp, body := execStep(ctx, client, step, vars)
 		if resp == nil {
 			continue
 		}
@@ -87,14 +88,14 @@ func Run(wf *Workflow, client *http.Client) []WorkflowFinding {
 		}
 		// Run fuzz strategies
 		for _, strat := range step.Fuzz {
-			sf := runStrategy(strat, client, wf, i, vars)
+			sf := runStrategy(ctx, strat, client, wf, i, vars)
 			findings = append(findings, sf...)
 		}
 	}
 	return findings
 }
 
-func execStep(client *http.Client, step Step, vars map[string]string) (*http.Response, string) {
+func execStep(ctx context.Context, client *http.Client, step Step, vars map[string]string) (*http.Response, string) {
 	url := substituteVars(step.Request.URL, vars)
 	bodyStr := substituteVars(step.Request.Body, vars)
 
@@ -102,7 +103,7 @@ func execStep(client *http.Client, step Step, vars map[string]string) (*http.Res
 	if bodyStr != "" {
 		bodyReader = strings.NewReader(bodyStr)
 	}
-	req, err := http.NewRequest(step.Request.Method, url, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, step.Request.Method, url, bodyReader)
 	if err != nil {
 		return nil, ""
 	}
@@ -121,7 +122,7 @@ func execStep(client *http.Client, step Step, vars map[string]string) (*http.Res
 	return resp, string(b)
 }
 
-func runStrategy(strat string, client *http.Client, wf *Workflow, stepIdx int, vars map[string]string) []WorkflowFinding {
+func runStrategy(ctx context.Context, strat string, client *http.Client, wf *Workflow, stepIdx int, vars map[string]string) []WorkflowFinding {
 	var findings []WorkflowFinding
 	step := wf.Steps[stepIdx]
 
@@ -129,7 +130,7 @@ func runStrategy(strat string, client *http.Client, wf *Workflow, stepIdx int, v
 	case "replay_n_times":
 		successCount := 0
 		for i := 0; i < 5; i++ {
-			resp, _ := execStep(client, step, vars)
+			resp, _ := execStep(ctx, client, step, vars)
 			if resp != nil && resp.StatusCode < 400 {
 				successCount++
 			}
@@ -150,7 +151,7 @@ func runStrategy(strat string, client *http.Client, wf *Workflow, stepIdx int, v
 		if re.MatchString(origBody) {
 			negStep := step
 			negStep.Request.Body = re.ReplaceAllString(origBody, `${1}-1`)
-			resp, body := execStep(client, negStep, vars)
+			resp, body := execStep(ctx, client, negStep, vars)
 			if resp != nil && resp.StatusCode < 400 {
 				findings = append(findings, WorkflowFinding{
 					Step:     step.Name,
@@ -166,7 +167,7 @@ func runStrategy(strat string, client *http.Client, wf *Workflow, stepIdx int, v
 		// Skip this step and try the next one directly
 		if stepIdx+1 < len(wf.Steps) {
 			nextStep := wf.Steps[stepIdx+1]
-			resp, body := execStep(client, nextStep, vars)
+			resp, body := execStep(ctx, client, nextStep, vars)
 			if resp != nil && resp.StatusCode < 400 {
 				findings = append(findings, WorkflowFinding{
 					Step:     step.Name,
@@ -181,7 +182,7 @@ func runStrategy(strat string, client *http.Client, wf *Workflow, stepIdx int, v
 	case "skip_auth":
 		// Try without cookies/auth headers
 		noAuthClient := httpx.New(httpx.Options{TimeoutSec: 10, InsecureSkipVerify: true})
-		resp, body := execStep(noAuthClient, step, vars)
+		resp, body := execStep(ctx, noAuthClient, step, vars)
 		if resp != nil && resp.StatusCode < 400 {
 			findings = append(findings, WorkflowFinding{
 				Step:     step.Name,

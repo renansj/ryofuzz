@@ -350,7 +350,7 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("[+] Workflow %q: %d steps\n", wf.Name, len(wf.Steps))
 		client := engine.NewAuthedClient(timeout, staticAuthHeaders(), cookies, proxy, followRedir)
-		wfFindings := workflow.Run(wf, client)
+		wfFindings := workflow.Run(ctx, wf, client)
 		fmt.Printf("[+] Workflow findings: %d\n", len(wfFindings))
 		var allFindings []*vulns.Finding
 		for _, f := range wfFindings {
@@ -386,7 +386,7 @@ func run(cmd *cobra.Command, args []string) error {
 			hdrs["Cookie"] = cookies
 		}
 		attacker := &race.SinglePacketAttack{}
-		results := attacker.Attack(targetURL, method, body, hdrs, raceSinglepacket)
+		results := attacker.Attack(ctx, targetURL, method, body, hdrs, raceSinglepacket)
 		diverged, evidence := race.DetectDivergence(results)
 		if diverged {
 			fmt.Printf("[!] RACE CONDITION DETECTED: %s\n", evidence)
@@ -541,6 +541,7 @@ func run(cmd *cobra.Command, args []string) error {
 				Param:   point.Name,
 				Value:   point.OriginalValue,
 				Timeout: timeout,
+				Ctx:     ctx,
 			})
 
 			model, findings := eng.Run()
@@ -601,6 +602,7 @@ func run(cmd *cobra.Command, args []string) error {
 			Timeout:     timeout,
 			Points:      points,
 			Concurrency: concurrency,
+			Ctx:         ctx,
 		})
 
 		fmt.Printf("[*] Starting guided fuzzer (max_execs=%d, max_time=%s)\n", maxExecs, maxTime)

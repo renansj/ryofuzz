@@ -1,6 +1,7 @@
 package behavioral
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -31,6 +32,7 @@ type Engine struct {
 	ParamValue string
 	Timeout    int
 	client     *http.Client
+	ctx        context.Context
 }
 
 // BehaviorModel represents the server's observed behavior
@@ -103,6 +105,7 @@ type Config struct {
 	Param   string
 	Value   string
 	Timeout int
+	Ctx     context.Context
 }
 
 func New(cfg Config) *Engine {
@@ -115,7 +118,17 @@ func New(cfg Config) *Engine {
 		ParamName:  cfg.Param,
 		ParamValue: cfg.Value,
 		Timeout:    cfg.Timeout,
+		ctx:        cfg.Ctx,
 	}
+}
+
+// context returns the engine context, defaulting to Background when unset so
+// direct (non-CLI) callers keep working.
+func (e *Engine) context() context.Context {
+	if e.ctx == nil {
+		return context.Background()
+	}
+	return e.ctx
 }
 
 // Run executes the full behavioral analysis pipeline
@@ -775,7 +788,7 @@ func (e *Engine) buildRequest(value string) *http.Request {
 		bodyReader = strings.NewReader(body)
 	}
 
-	req, err := http.NewRequest(method, targetURL, bodyReader)
+	req, err := http.NewRequestWithContext(e.context(), method, targetURL, bodyReader)
 	if err != nil {
 		return nil
 	}
