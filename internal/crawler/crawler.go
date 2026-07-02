@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/renansj/ryofuzz/internal/httpx"
 )
@@ -66,6 +65,7 @@ type crawler struct {
 	baseURL    *url.URL
 	client     *http.Client
 	ctx        context.Context
+	enqueue    func(crawlTask)
 	visited    map[string]bool
 	mu         sync.Mutex
 	result     *CrawlResult
@@ -105,46 +105,64 @@ func CrawlContext(ctx context.Context, config CrawlConfig) (*CrawlResult, error)
 	}
 	c.parseSitemap()
 
-	queue := make(chan crawlTask, 1000)
-	var wg sync.WaitGroup
+	queue := make(chan crawlTask, 4096)
+	done := make(chan struct{})
+	var pending sync.WaitGroup // counts tasks not yet processed
+	var closeOnce sync.Once
+	stop := func() { closeOnce.Do(func() { close(done) }) }
 
 	concurrency := config.Concurrency
 	if concurrency < 1 {
 		concurrency = 5
 	}
 
+	// enqueue adds a task, tracking it as outstanding work. It never blocks on a
+	// full queue or a cancelled scan, so workers can't deadlock.
+	c.enqueue = func(task crawlTask) {
+		if c.ctx.Err() != nil {
+			return
+		}
+		pending.Add(1)
+		select {
+		case queue <- task:
+		default:
+			// Queue full: drop the task but keep the counter balanced.
+			pending.Done()
+		}
+	}
+
+	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for task := range queue {
-				if c.ctx.Err() != nil {
-					continue // drain quietly once cancelled
+			for {
+				select {
+				case <-done:
+					return
+				case task := <-queue:
+					if c.ctx.Err() == nil {
+						c.processURL(task)
+					}
+					pending.Done()
 				}
-				c.processURL(task, queue)
 			}
 		}()
 	}
 
-	queue <- crawlTask{url: config.SeedURL, depth: 0}
+	// Seed.
 	c.markVisited(config.SeedURL)
+	c.enqueue(crawlTask{url: config.SeedURL, depth: 0})
 
-	// Monitor: close queue when no more work. On cancellation the workers
-	// stop enqueuing, so the queue drains and this same check closes it.
+	// Closer: stop the workers once all work is drained or the scan is cancelled.
 	go func() {
-		for {
-			time.Sleep(500 * time.Millisecond)
-			c.mu.Lock()
-			qLen := len(queue)
-			c.mu.Unlock()
-			if qLen == 0 || c.ctx.Err() != nil {
-				time.Sleep(1 * time.Second)
-				if len(queue) == 0 || c.ctx.Err() != nil {
-					close(queue)
-					return
-				}
-			}
+		drained := make(chan struct{})
+		go func() { pending.Wait(); close(drained) }()
+		select {
+		case <-drained:
+		case <-c.ctx.Done():
 		}
+		stop()
 	}()
 
 	wg.Wait()
@@ -210,7 +228,7 @@ func (c *crawler) fetch(targetURL string) (string, int, error) {
 	return string(body), resp.StatusCode, nil
 }
 
-func (c *crawler) processURL(task crawlTask, queue chan<- crawlTask) {
+func (c *crawler) processURL(task crawlTask) {
 	if task.depth > c.config.MaxDepth {
 		return
 	}
@@ -236,10 +254,7 @@ func (c *crawler) processURL(task crawlTask, queue chan<- crawlTask) {
 			c.result.URLs = append(c.result.URLs, u)
 			c.mu.Unlock()
 			if task.depth+1 <= c.config.MaxDepth {
-				select {
-				case queue <- crawlTask{url: u.URL, depth: task.depth + 1}:
-				default:
-				}
+				c.enqueue(crawlTask{url: u.URL, depth: task.depth + 1})
 			}
 		}
 	}
