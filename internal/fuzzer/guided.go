@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/renansj/ryofuzz/internal/httpx"
 	"github.com/renansj/ryofuzz/internal/input"
 	"github.com/renansj/ryofuzz/internal/mutator"
 )
@@ -34,13 +35,13 @@ type CoverageGuidedFuzzer struct {
 	Concurrency int
 
 	// AFL++ internals
-	corpus       []CorpusEntry     // inputs that found new coverage
-	coverageMap  map[string]bool   // seen response fingerprints (our "bitmap")
-	queue        []CorpusEntry     // current mutation queue
-	stats        FuzzStats
-	mu           sync.Mutex
-	client       *http.Client
-	rng          *rand.Rand
+	corpus      []CorpusEntry   // inputs that found new coverage
+	coverageMap map[string]bool // seen response fingerprints (our "bitmap")
+	queue       []CorpusEntry   // current mutation queue
+	stats       FuzzStats
+	mu          sync.Mutex
+	client      *http.Client
+	rng         *rand.Rand
 
 	// Callbacks
 	OnNewCoverage func(entry CorpusEntry)
@@ -53,34 +54,34 @@ type CorpusEntry struct {
 	Point       input.InjectionPoint
 	Fingerprint string
 	Response    ResponseInfo
-	Energy      int   // how many more mutations to generate from this
-	Depth       int   // mutation depth from seed
-	Parent      int   // index of parent in corpus (-1 for seeds)
+	Energy      int // how many more mutations to generate from this
+	Depth       int // mutation depth from seed
+	Parent      int // index of parent in corpus (-1 for seeds)
 	FoundAt     time.Time
 }
 
 // ResponseInfo captures the server's behavior for an input
 type ResponseInfo struct {
-	StatusCode    int
-	BodyLength    int
-	BodyHash      string
-	BodyPreview   string // normalized body sample, used for simhash coverage
-	TimingMs      int64
-	ErrorClass    string
-	Headers       map[string]string
-	Interesting   bool
+	StatusCode  int
+	BodyLength  int
+	BodyHash    string
+	BodyPreview string // normalized body sample, used for simhash coverage
+	TimingMs    int64
+	ErrorClass  string
+	Headers     map[string]string
+	Interesting bool
 }
 
 // FuzzStats tracks fuzzer performance
 type FuzzStats struct {
-	TotalExecs     int64
-	TotalCoverage  int
-	CorpusSize     int
-	CrashCount     int
-	LastNewCov     time.Time
-	ExecsPerSec    float64
-	StartTime      time.Time
-	CyclesDone     int
+	TotalExecs    int64
+	TotalCoverage int
+	CorpusSize    int
+	CrashCount    int
+	LastNewCov    time.Time
+	ExecsPerSec   float64
+	StartTime     time.Time
+	CyclesDone    int
 }
 
 // Config for the coverage-guided fuzzer
@@ -94,9 +95,9 @@ type Config struct {
 	Timeout     int
 	Points      []input.InjectionPoint
 	Concurrency int
-	MaxExecs    int64  // 0 = unlimited
+	MaxExecs    int64         // 0 = unlimited
 	MaxTime     time.Duration // 0 = unlimited
-	MaxDepth    int    // max mutation chain depth
+	MaxDepth    int           // max mutation chain depth
 }
 
 func New(cfg Config) *CoverageGuidedFuzzer {
@@ -376,7 +377,7 @@ func (f *CoverageGuidedFuzzer) havoc(value string, count int) []string {
 				// Splice with another corpus entry
 				if len(f.corpus) > 1 {
 					other := f.corpus[f.rng.Intn(len(f.corpus))]
-						mutated = f.splice(mutated, other.Value)
+					mutated = f.splice(mutated, other.Value)
 				}
 			case strategy < 12:
 				// Insert interesting token
@@ -448,12 +449,12 @@ func (f *CoverageGuidedFuzzer) execute(value string, point input.InjectionPoint)
 	body := string(buf[:n])
 
 	return ResponseInfo{
-		StatusCode: resp.StatusCode,
-		BodyLength: n,
-		BodyHash:   fmt.Sprintf("%x", md5.Sum(buf[:n])),
+		StatusCode:  resp.StatusCode,
+		BodyLength:  n,
+		BodyHash:    fmt.Sprintf("%x", md5.Sum(buf[:n])),
 		BodyPreview: body,
-		TimingMs:   elapsed,
-		ErrorClass: extractErrorClass(body),
+		TimingMs:    elapsed,
+		ErrorClass:  extractErrorClass(body),
 		Interesting: resp.StatusCode == 500 || elapsed > 5000,
 	}
 }
@@ -490,11 +491,11 @@ func (f *CoverageGuidedFuzzer) responseFingerprint(resp ResponseInfo) string {
 }
 
 var (
-	reUUID      = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
-	reISO8601   = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}`)
-	reUnixTS    = regexp.MustCompile(`\b1[0-9]{9}\b`)
-	reCSRF      = regexp.MustCompile(`name="_token"\s+value="[^"]*"`)
-	reHex32     = regexp.MustCompile(`[0-9a-fA-F]{32,}`)
+	reUUID    = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
+	reISO8601 = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}`)
+	reUnixTS  = regexp.MustCompile(`\b1[0-9]{9}\b`)
+	reCSRF    = regexp.MustCompile(`name="_token"\s+value="[^"]*"`)
+	reHex32   = regexp.MustCompile(`[0-9a-fA-F]{32,}`)
 )
 
 func normalizeBody(body string) string {
@@ -615,12 +616,10 @@ func (f *CoverageGuidedFuzzer) getClient() *http.Client {
 	if f.client != nil {
 		return f.client
 	}
-	f.client = &http.Client{
-		Timeout: time.Duration(f.Timeout) * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	f.client = httpx.New(httpx.Options{
+		TimeoutSec:         f.Timeout,
+		InsecureSkipVerify: true,
+	})
 	return f.client
 }
 
@@ -765,13 +764,6 @@ func (f *CoverageGuidedFuzzer) splice(a, b string) string {
 	splitA := f.rng.Intn(len(a))
 	splitB := f.rng.Intn(len(b))
 	return a[:splitA] + b[splitB:]
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // Interesting tokens that often trigger bugs when injected

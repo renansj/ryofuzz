@@ -1,15 +1,17 @@
 package behavioral
 
 import (
-	"crypto/tls"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/renansj/ryofuzz/internal/httpx"
 )
 
 // Engine implements behavioral intent mapping.
@@ -20,23 +22,23 @@ import (
 // Phase 2: Model - build a model of how the server treats input
 // Phase 3: Attack - find inconsistencies in the model and exploit them
 type Engine struct {
-	Target      string
-	Method      string
-	Body        string
-	Headers     []string
-	Cookies     string
-	ParamName   string
-	ParamValue  string
-	Timeout     int
-	client      *http.Client
+	Target     string
+	Method     string
+	Body       string
+	Headers    []string
+	Cookies    string
+	ParamName  string
+	ParamValue string
+	Timeout    int
+	client     *http.Client
 }
 
 // BehaviorModel represents the server's observed behavior
 type BehaviorModel struct {
-	InputType       string            // what the server thinks our input is (url, query, filename, id, text)
-	Transformations []string          // what the server does to our input (url_fetch, db_query, file_read, reflect, ignore)
-	Boundaries      []Boundary        // where behavior changes
-	Inconsistencies []Inconsistency   // the bugs - where logic breaks
+	InputType       string                    // what the server thinks our input is (url, query, filename, id, text)
+	Transformations []string                  // what the server does to our input (url_fetch, db_query, file_read, reflect, ignore)
+	Boundaries      []Boundary                // where behavior changes
+	Inconsistencies []Inconsistency           // the bugs - where logic breaks
 	ResponseMap     map[string]*ResponseClass // all observed response classes
 }
 
@@ -54,20 +56,20 @@ type Inconsistency struct {
 	Severity    string
 	Title       string
 	Description string
-	ProofA      Probe // request that shows behavior A
-	ProofB      Probe // request that shows contradicting behavior B
+	ProofA      Probe  // request that shows behavior A
+	ProofB      Probe  // request that shows contradicting behavior B
 	Implication string // what this means for an attacker
 }
 
 // Probe is a single request/response pair
 type Probe struct {
-	Input    string
-	Status   int
-	Size     int
-	TimeMs   int64
-	Body     string
-	Headers  map[string]string
-	Class    string // which response class this belongs to
+	Input   string
+	Status  int
+	Size    int
+	TimeMs  int64
+	Body    string
+	Headers map[string]string
+	Class   string // which response class this belongs to
 }
 
 // ResponseClass groups similar responses
@@ -318,7 +320,7 @@ func (e *Engine) phase2Model(probes []Probe) *BehaviorModel {
 	model.InputType = e.inferInputType(probes)
 	model.Transformations = e.inferTransformations(probes)
 	// If we know it's a URL parameter, ensure url_fetch is in transformations
-	if strings.Contains(model.InputType, "url") && !contains(model.Transformations, "url_fetch") {
+	if strings.Contains(model.InputType, "url") && !slices.Contains(model.Transformations, "url_fetch") {
 		model.Transformations = append(model.Transformations, "url_fetch")
 	}
 	model.Boundaries = e.findBoundaries(probes)
@@ -370,23 +372,23 @@ func (e *Engine) phase3Attack(model *BehaviorModel) []Finding {
 	}
 
 	// Check for SSRF intent
-	if contains(model.Transformations, "url_fetch") {
+	if slices.Contains(model.Transformations, "url_fetch") {
 		findings = append(findings, e.probeSSRFDepth()...)
 	}
 	// Check for reflection (XSS potential)
-	if contains(model.Transformations, "reflect") {
+	if slices.Contains(model.Transformations, "reflect") {
 		findings = append(findings, e.probeReflectionContext()...)
 	}
 	// Check for file operations
-	if contains(model.Transformations, "file_read") {
+	if slices.Contains(model.Transformations, "file_read") {
 		findings = append(findings, e.probeFileAccess()...)
 	}
 	// Check for execution
-	if contains(model.Transformations, "execute") {
+	if slices.Contains(model.Transformations, "execute") {
 		findings = append(findings, e.probeExecution()...)
 	}
 	// Check for database interaction
-	if contains(model.Transformations, "db_query") {
+	if slices.Contains(model.Transformations, "db_query") {
 		findings = append(findings, e.probeDatabase()...)
 	}
 
@@ -801,15 +803,10 @@ func (e *Engine) getClient() *http.Client {
 	if e.client != nil {
 		return e.client
 	}
-	e.client = &http.Client{
-		Timeout: time.Duration(e.Timeout) * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	e.client = httpx.New(httpx.Options{
+		TimeoutSec:         e.Timeout,
+		InsecureSkipVerify: true,
+	})
 	return e.client
 }
 
@@ -822,15 +819,6 @@ func findProbe(probes []Probe, class string) *Probe {
 		}
 	}
 	return nil
-}
-
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
 }
 
 // PrintModel outputs the behavior model in a readable format

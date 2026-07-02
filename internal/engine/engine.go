@@ -2,7 +2,6 @@ package engine
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,12 +9,15 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/renansj/ryofuzz/internal/httpx"
 	"github.com/renansj/ryofuzz/internal/input"
 	"github.com/renansj/ryofuzz/internal/mutator"
+	"github.com/renansj/ryofuzz/internal/util"
 )
 
 // Config do engine
@@ -28,6 +30,12 @@ type Config struct {
 	Proxy       string
 	Timeout     int
 	FollowRedir bool
+	// MaxBody bounds how many bytes of each response body are read into memory.
+	// 0 applies util.DefaultMaxBodyBytes. Prevents OOM on hostile/huge bodies.
+	MaxBody int64
+	// VerifyTLS enables TLS certificate verification. Default (false) keeps the
+	// pentest-friendly skip-verify behavior; --verify-tls flips it on (F3).
+	VerifyTLS bool
 }
 
 // Response capturada
@@ -65,7 +73,7 @@ func CaptureBaseline(cfg Config) (*Response, error) {
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, _ := util.ReadBodyLimited(resp.Body, cfg.MaxBody)
 
 	return &Response{
 		StatusCode:  resp.StatusCode,
@@ -115,21 +123,43 @@ func Fuzz(cfg Config, points []input.InjectionPoint, payloads []mutator.Payload,
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result := sendFuzzedWith(client, cfg, payload, verbose)
+			result := safeSendFuzzed(client, cfg, payload, verbose)
 
 			mu.Lock()
 			results = append(results, result)
 			done++
-			if done%100 == 0 || verbose {
-				fmt.Printf("\r[*] Progress: %d/%d requests sent", done, total)
-			}
+			cur := done
 			mu.Unlock()
+
+			if cur%100 == 0 || verbose {
+				fmt.Fprintf(os.Stderr, "\r[*] Progress: %d/%d requests sent", cur, total)
+			}
 		}(p)
 	}
 
 	wg.Wait()
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 	return results
+}
+
+// safeSendFuzzed wraps sendFuzzedWith with a recover so a panic inside request
+// construction, injection, or the HTTP client cannot crash the whole scan and
+// lose every result. The panic is converted into a FuzzResult carrying the
+// error, tagged with the payload that triggered it for triage.
+func safeSendFuzzed(client *http.Client, cfg Config, payload mutator.Payload, verbose bool) (result FuzzResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = FuzzResult{
+				Payload: payload,
+				Point:   payload.Point,
+				Error:   fmt.Errorf("panic while fuzzing payload %q (%s): %v", payload.Value, payload.Module, r),
+			}
+			if verbose {
+				fmt.Fprintf(os.Stderr, "\n[!] recovered panic on payload %q (%s): %v\n", payload.Value, payload.Module, r)
+			}
+		}
+	}()
+	return sendFuzzedWith(client, cfg, payload, verbose)
 }
 
 func sendFuzzed(cfg Config, payload mutator.Payload, verbose bool) FuzzResult {
@@ -193,7 +223,7 @@ func sendFuzzedWith(client *http.Client, cfg Config, payload mutator.Payload, ve
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, _ := util.ReadBodyLimited(resp.Body, cfg.MaxBody)
 
 	return FuzzResult{
 		Payload: payload,
@@ -270,7 +300,7 @@ func sendMultipart(client *http.Client, cfg Config, payload mutator.Payload) Fuz
 		return FuzzResult{Payload: payload, Point: payload.Point, Error: err}
 	}
 	defer resp.Body.Close()
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, _ := util.ReadBodyLimited(resp.Body, cfg.MaxBody)
 
 	return FuzzResult{
 		Payload: payload,
@@ -317,7 +347,7 @@ func sendRawPath(client *http.Client, cfg Config, payload mutator.Payload) FuzzR
 		return FuzzResult{Payload: payload, Point: payload.Point, Error: err}
 	}
 	defer resp.Body.Close()
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, _ := util.ReadBodyLimited(resp.Body, cfg.MaxBody)
 
 	return FuzzResult{
 		Payload: payload,
@@ -335,29 +365,12 @@ func sendRawPath(client *http.Client, cfg Config, payload mutator.Payload) FuzzR
 }
 
 func buildClient(cfg Config) *http.Client {
-	transport := &http.Transport{
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-		MaxIdleConnsPerHost: 100,
-		DisableKeepAlives:   false,
-	}
-
-	if cfg.Proxy != "" {
-		proxyURL, _ := url.Parse(cfg.Proxy)
-		transport.Proxy = http.ProxyURL(proxyURL)
-	}
-
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   time.Duration(cfg.Timeout) * time.Second,
-	}
-
-	if !cfg.FollowRedir {
-		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		}
-	}
-
-	return client
+	return httpx.New(httpx.Options{
+		TimeoutSec:         cfg.Timeout,
+		Proxy:              cfg.Proxy,
+		InsecureSkipVerify: !cfg.VerifyTLS,
+		FollowRedirects:    cfg.FollowRedir,
+	})
 }
 
 func buildRequest(cfg Config) (*http.Request, error) {

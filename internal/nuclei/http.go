@@ -1,13 +1,15 @@
 package nuclei
 
 import (
-	"crypto/tls"
 	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/renansj/ryofuzz/internal/httpx"
+	"github.com/renansj/ryofuzz/internal/util"
 )
 
 // httpReq is a fully-interpolated request ready to send.
@@ -20,17 +22,12 @@ type httpReq struct {
 }
 
 func newHTTPClient(timeout int, proxy string, follow bool) *http.Client {
-	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-	if proxy != "" {
-		if pu, err := url.Parse(proxy); err == nil {
-			tr.Proxy = http.ProxyURL(pu)
-		}
-	}
-	c := &http.Client{Timeout: time.Duration(timeout) * time.Second, Transport: tr}
-	if !follow {
-		c.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
-	}
-	return c
+	return httpx.New(httpx.Options{
+		TimeoutSec:         timeout,
+		Proxy:              proxy,
+		FollowRedirects:    follow,
+		InsecureSkipVerify: true,
+	})
 }
 
 // buildRequests produces concrete requests from a Request definition, applying
@@ -108,7 +105,7 @@ func doRequest(client *http.Client, hr httpReq, def Request) *respData {
 	if err != nil {
 		return nil
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := util.ReadBodyLimited(resp.Body, 0)
 	resp.Body.Close()
 	return responseToData(resp, string(body), dur)
 }

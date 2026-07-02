@@ -2,13 +2,15 @@ package race
 
 import (
 	"crypto/sha256"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/renansj/ryofuzz/internal/httpx"
+	"github.com/renansj/ryofuzz/internal/util"
 )
 
 type SinglePacketAttack struct{}
@@ -29,13 +31,10 @@ func (s *SinglePacketAttack) Attack(targetURL string, method string, body string
 
 	barrier.Add(1) // single barrier for all goroutines
 
-	tr := &http.Transport{
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
-		MaxIdleConns:      count,
-		IdleConnTimeout:   30 * time.Second,
-		DisableKeepAlives: false,
-		ForceAttemptHTTP2: true,
-	}
+	tr := httpx.NewTransport(httpx.Options{InsecureSkipVerify: true})
+	// Single-packet race needs one warm idle conn per parallel request.
+	tr.MaxIdleConns = count
+	tr.MaxIdleConnsPerHost = count
 	client := &http.Client{Transport: tr, Timeout: 30 * time.Second}
 
 	// Warm up connections
@@ -78,7 +77,7 @@ func (s *SinglePacketAttack) Attack(targetURL string, method string, body string
 				return
 			}
 			defer resp.Body.Close()
-			b, _ := io.ReadAll(resp.Body)
+			b, _ := util.ReadBodyLimited(resp.Body, 0)
 			h := sha256.Sum256(b)
 			results[idx] = RaceResult{
 				Index:      idx,

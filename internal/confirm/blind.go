@@ -4,9 +4,9 @@ import (
 	"math"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/renansj/ryofuzz/internal/engine"
+	"github.com/renansj/ryofuzz/internal/httpx"
 	"github.com/renansj/ryofuzz/internal/mutator"
 )
 
@@ -20,7 +20,11 @@ type BlindConfirmer struct {
 // NewBlindConfirmer creates a confirmer with defaults
 func NewBlindConfirmer(cfg engine.Config) *BlindConfirmer {
 	return &BlindConfirmer{
-		Client:  &http.Client{Timeout: time.Duration(cfg.Timeout) * time.Second},
+		Client: httpx.New(httpx.Options{
+			TimeoutSec:         cfg.Timeout,
+			Proxy:              cfg.Proxy,
+			InsecureSkipVerify: !cfg.VerifyTLS,
+		}),
 		Samples: 5,
 		Cfg:     cfg,
 	}

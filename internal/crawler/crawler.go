@@ -1,7 +1,6 @@
 package crawler
 
 import (
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/renansj/ryofuzz/internal/httpx"
 )
 
 // CrawlConfig holds crawler configuration.
@@ -76,21 +77,16 @@ func Crawl(config CrawlConfig) (*CrawlResult, error) {
 		return nil, fmt.Errorf("invalid seed URL: %w", err)
 	}
 
-	transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-	if config.Proxy != "" {
-		proxyURL, err := url.Parse(config.Proxy)
-		if err == nil {
-			transport.Proxy = http.ProxyURL(proxyURL)
-		}
-	}
-
 	c := &crawler{
 		config:  config,
 		baseURL: parsed,
-		client: &http.Client{
-			Timeout:   time.Duration(config.Timeout) * time.Second,
-			Transport: transport,
-		},
+		client: httpx.New(httpx.Options{
+			TimeoutSec: config.Timeout,
+			Proxy:      config.Proxy,
+			// Crawler follows links, so redirects are followed by default.
+			FollowRedirects:    true,
+			InsecureSkipVerify: true,
+		}),
 		visited: make(map[string]bool),
 		result:  &CrawlResult{},
 	}
@@ -262,10 +258,10 @@ func (c *crawler) processURL(task crawlTask, queue chan<- crawlTask) {
 }
 
 var (
-	reHref   = regexp.MustCompile(`(?i)href\s*=\s*["']([^"'#]+)["']`)
-	reSrc    = regexp.MustCompile(`(?i)src\s*=\s*["']([^"']+)["']`)
-	reAction = regexp.MustCompile(`(?i)action\s*=\s*["']([^"']+)["']`)
-	reComment = regexp.MustCompile(`<!--([\s\S]*?)-->`)
+	reHref       = regexp.MustCompile(`(?i)href\s*=\s*["']([^"'#]+)["']`)
+	reSrc        = regexp.MustCompile(`(?i)src\s*=\s*["']([^"']+)["']`)
+	reAction     = regexp.MustCompile(`(?i)action\s*=\s*["']([^"']+)["']`)
+	reComment    = regexp.MustCompile(`<!--([\s\S]*?)-->`)
 	reCommentURL = regexp.MustCompile(`(?i)(https?://[^\s<>"']+|/[a-zA-Z0-9_/\-\.]+)`)
 )
 
@@ -372,11 +368,11 @@ func (c *crawler) extractJSFiles(body, sourceURL string) []string {
 }
 
 var (
-	reAPIPath   = regexp.MustCompile(`["'](/(?:api|v[0-9]+)/[a-zA-Z0-9_/\-\.]+)["']`)
-	reFetch     = regexp.MustCompile(`(?i)fetch\s*\(\s*["']([^"']+)["']`)
-	reAxios     = regexp.MustCompile(`(?i)axios\.(?:get|post|put|delete|patch)\s*\(\s*["']([^"']+)["']`)
-	reXHROpen   = regexp.MustCompile(`(?i)\.open\s*\(\s*["'][A-Z]+["']\s*,\s*["']([^"']+)["']`)
-	reFullURL   = regexp.MustCompile(`["'](https?://[^\s"'<>]+)["']`)
+	reAPIPath = regexp.MustCompile(`["'](/(?:api|v[0-9]+)/[a-zA-Z0-9_/\-\.]+)["']`)
+	reFetch   = regexp.MustCompile(`(?i)fetch\s*\(\s*["']([^"']+)["']`)
+	reAxios   = regexp.MustCompile(`(?i)axios\.(?:get|post|put|delete|patch)\s*\(\s*["']([^"']+)["']`)
+	reXHROpen = regexp.MustCompile(`(?i)\.open\s*\(\s*["'][A-Z]+["']\s*,\s*["']([^"']+)["']`)
+	reFullURL = regexp.MustCompile(`["'](https?://[^\s"'<>]+)["']`)
 )
 
 func (c *crawler) extractAPIEndpoints(body string) []string {

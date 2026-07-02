@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -32,7 +33,8 @@ func Analyze(baseline *engine.Response, results []engine.FuzzResult, modules []v
 				headers[k] = v
 			}
 
-			finding := mod.Detect(
+			finding := safeDetect(
+				mod,
 				result.Payload,
 				baseline.Body,
 				baseline.StatusCode,
@@ -67,6 +69,21 @@ func Analyze(baseline *engine.Response, results []engine.FuzzResult, modules []v
 	// Ordenar por severidade
 	sortFindings(findings)
 	return findings
+}
+
+// safeDetect runs a module's Detect under a recover so a panic in one module
+// (bad slice index, plugin regex, etc.) cannot crash the scan. A panicking
+// module simply yields no finding.
+func safeDetect(mod vulns.VulnModule, payload mutator.Payload, baseBody string, baseStatus int, baseTime int64,
+	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) (f *vulns.Finding) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "\n[!] recovered panic in module %q Detect (payload %q): %v\n",
+				mod.Name(), payload.Value, r)
+			f = nil
+		}
+	}()
+	return mod.Detect(payload, baseBody, baseStatus, baseTime, respBody, respStatus, respTime, respHeaders)
 }
 
 // confirmFinding applies confirmation checks for time-based and boolean findings
