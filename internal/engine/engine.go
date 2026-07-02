@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -57,10 +58,16 @@ type FuzzResult struct {
 	Error    error
 }
 
-// CaptureBaseline envia o request original e captura a resposta de referência
+// CaptureBaseline sends the original request and captures the reference
+// response. Compatibility wrapper around CaptureBaselineContext.
 func CaptureBaseline(cfg Config) (*Response, error) {
+	return CaptureBaselineContext(context.Background(), cfg)
+}
+
+// CaptureBaselineContext is the cancellable form of CaptureBaseline.
+func CaptureBaselineContext(ctx context.Context, cfg Config) (*Response, error) {
 	client := buildClient(cfg)
-	req, err := buildRequest(cfg)
+	req, err := buildRequest(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -86,11 +93,25 @@ func CaptureBaseline(cfg Config) (*Response, error) {
 	}, nil
 }
 
-// Fuzz executes all payloads against injection points with concurrency
+// Fuzz executes all payloads against injection points with concurrency.
+// It is a compatibility wrapper around FuzzContext using a background context
+// (no external cancellation). Prefer FuzzContext so Ctrl+C and a global scan
+// timeout can cancel work in flight (review B1).
 func Fuzz(cfg Config, points []input.InjectionPoint, payloads []mutator.Payload, concurrency, delayMs, rateLimit int, verbose bool) []FuzzResult {
+	return FuzzContext(context.Background(), cfg, points, payloads, concurrency, delayMs, rateLimit, verbose)
+}
+
+// FuzzContext is the cancellable form of Fuzz. When ctx is cancelled (SIGINT,
+// SIGTERM or a global timeout), the dispatch loop stops sending new payloads,
+// in-flight requests are aborted via http.NewRequestWithContext, and whatever
+// results were collected so far are returned.
+func FuzzContext(ctx context.Context, cfg Config, points []input.InjectionPoint, payloads []mutator.Payload, concurrency, delayMs, rateLimit int, verbose bool) []FuzzResult {
 	var results []FuzzResult
 	var mu sync.Mutex
 
+	if concurrency < 1 {
+		concurrency = 1
+	}
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
@@ -109,21 +130,42 @@ func Fuzz(cfg Config, points []input.InjectionPoint, payloads []mutator.Payload,
 	total := len(payloads)
 	done := 0
 
+dispatch:
 	for _, p := range payloads {
+		// Stop dispatching as soon as the scan is cancelled.
+		select {
+		case <-ctx.Done():
+			break dispatch
+		default:
+		}
+
 		if rateLimit > 0 {
-			<-limiter
+			select {
+			case <-limiter:
+			case <-ctx.Done():
+				break dispatch
+			}
 		}
 		if delayMs > 0 {
-			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+			select {
+			case <-time.After(time.Duration(delayMs) * time.Millisecond):
+			case <-ctx.Done():
+				break dispatch
+			}
 		}
 
 		wg.Add(1)
-		sem <- struct{}{}
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Done()
+			break dispatch
+		}
 		go func(payload mutator.Payload) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result := safeSendFuzzed(client, cfg, payload, verbose)
+			result := safeSendFuzzed(ctx, client, cfg, payload, verbose)
 
 			mu.Lock()
 			results = append(results, result)
@@ -146,7 +188,7 @@ func Fuzz(cfg Config, points []input.InjectionPoint, payloads []mutator.Payload,
 // construction, injection, or the HTTP client cannot crash the whole scan and
 // lose every result. The panic is converted into a FuzzResult carrying the
 // error, tagged with the payload that triggered it for triage.
-func safeSendFuzzed(client *http.Client, cfg Config, payload mutator.Payload, verbose bool) (result FuzzResult) {
+func safeSendFuzzed(ctx context.Context, client *http.Client, cfg Config, payload mutator.Payload, verbose bool) (result FuzzResult) {
 	defer func() {
 		if r := recover(); r != nil {
 			result = FuzzResult{
@@ -159,23 +201,23 @@ func safeSendFuzzed(client *http.Client, cfg Config, payload mutator.Payload, ve
 			}
 		}
 	}()
-	return sendFuzzedWith(client, cfg, payload, verbose)
+	return sendFuzzedWith(ctx, client, cfg, payload, verbose)
 }
 
 func sendFuzzed(cfg Config, payload mutator.Payload, verbose bool) FuzzResult {
-	return sendFuzzedWith(buildClient(cfg), cfg, payload, verbose)
+	return sendFuzzedWith(context.Background(), buildClient(cfg), cfg, payload, verbose)
 }
 
-func sendFuzzedWith(client *http.Client, cfg Config, payload mutator.Payload, verbose bool) FuzzResult {
+func sendFuzzedWith(ctx context.Context, client *http.Client, cfg Config, payload mutator.Payload, verbose bool) FuzzResult {
 
 	// Real multipart/form-data upload (when the module requests it via Metadata)
 	if payload.Metadata != nil && payload.Metadata["upload"] == "1" {
-		return sendMultipart(client, cfg, payload)
+		return sendMultipart(ctx, client, cfg, payload)
 	}
 
 	// Host-level raw path probe (e.g. infoleak: GET scheme://host/.git/config)
 	if payload.Metadata != nil && payload.Metadata["rawpath"] != "" {
-		return sendRawPath(client, cfg, payload)
+		return sendRawPath(ctx, client, cfg, payload)
 	}
 
 	// Construir request com payload injetado
@@ -210,7 +252,7 @@ func sendFuzzedWith(client *http.Client, cfg Config, payload mutator.Payload, ve
 		FollowRedir: cfg.FollowRedir,
 	}
 
-	req, err := buildRequest(modCfg)
+	req, err := buildRequest(ctx, modCfg)
 	if err != nil {
 		return FuzzResult{Payload: payload, Point: payload.Point, Error: err}
 	}
@@ -243,7 +285,7 @@ func sendFuzzedWith(client *http.Client, cfg Config, payload mutator.Payload, ve
 // sendMultipart builds a real multipart/form-data upload request. The module
 // signals this via Metadata: upload_field (form field name), upload_filename
 // (the dangerous filename), upload_content (file bytes), upload_ctype (MIME).
-func sendMultipart(client *http.Client, cfg Config, payload mutator.Payload) FuzzResult {
+func sendMultipart(ctx context.Context, client *http.Client, cfg Config, payload mutator.Payload) FuzzResult {
 	field := payload.Metadata["upload_field"]
 	if field == "" {
 		field = payload.Point.Name
@@ -279,7 +321,7 @@ func sendMultipart(client *http.Client, cfg Config, payload mutator.Payload) Fuz
 	if method == "" {
 		method = "POST"
 	}
-	req, err := http.NewRequest(method, cfg.URL, &buf)
+	req, err := http.NewRequestWithContext(ctx, method, cfg.URL, &buf)
 	if err != nil {
 		return FuzzResult{Payload: payload, Point: payload.Point, Error: err}
 	}
@@ -319,7 +361,7 @@ func sendMultipart(client *http.Client, cfg Config, payload mutator.Payload) Fuz
 
 // sendRawPath issues a GET to scheme://host + rawpath, ignoring the original
 // URL path/query. Used for host-level checks like sensitive file disclosure.
-func sendRawPath(client *http.Client, cfg Config, payload mutator.Payload) FuzzResult {
+func sendRawPath(ctx context.Context, client *http.Client, cfg Config, payload mutator.Payload) FuzzResult {
 	base, err := url.Parse(cfg.URL)
 	if err != nil {
 		return FuzzResult{Payload: payload, Point: payload.Point, Error: err}
@@ -327,7 +369,7 @@ func sendRawPath(client *http.Client, cfg Config, payload mutator.Payload) FuzzR
 	rawpath := payload.Metadata["rawpath"]
 	target := base.Scheme + "://" + base.Host + rawpath
 
-	req, err := http.NewRequest("GET", target, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
 	if err != nil {
 		return FuzzResult{Payload: payload, Point: payload.Point, Error: err}
 	}
@@ -373,7 +415,7 @@ func buildClient(cfg Config) *http.Client {
 	})
 }
 
-func buildRequest(cfg Config) (*http.Request, error) {
+func buildRequest(ctx context.Context, cfg Config) (*http.Request, error) {
 	var bodyReader io.Reader
 	if cfg.Body != "" {
 		bodyReader = strings.NewReader(cfg.Body)
@@ -388,7 +430,7 @@ func buildRequest(cfg Config) (*http.Request, error) {
 		}
 	}
 
-	req, err := http.NewRequest(method, cfg.URL, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, cfg.URL, bodyReader)
 	if err != nil {
 		return nil, err
 	}

@@ -1,10 +1,13 @@
 package engine
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/renansj/ryofuzz/internal/input"
 	"github.com/renansj/ryofuzz/internal/mutator"
@@ -125,6 +128,39 @@ func TestFuzzBodyLimit(t *testing.T) {
 // panicModule is a fake module whose sole purpose is to panic; used to prove
 // the recover wrapper isolates a bad module (B2). It is exercised indirectly
 // via safeSendFuzzed since Fuzz builds requests internally.
+// TestFuzzContextCancellation verifies that cancelling the context stops the
+// scan promptly and returns fewer results than the full payload set (B1).
+func TestFuzzContextCancellation(t *testing.T) {
+	var served int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&served, 1)
+		time.Sleep(50 * time.Millisecond) // slow target
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	cfg := Config{Method: "GET", URL: srv.URL + "/?id=1", Timeout: 5}
+	point := input.InjectionPoint{Name: "id", Location: input.LocQueryParam}
+	var payloads []mutator.Payload
+	for i := 0; i < 500; i++ {
+		payloads = append(payloads, mutator.Payload{Value: "p", Point: point, Module: "test"})
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	results := FuzzContext(ctx, cfg, nil, payloads, 2, 0, 0, false)
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Errorf("expected prompt cancellation, took %v", elapsed)
+	}
+	if len(results) >= len(payloads) {
+		t.Errorf("expected cancellation to cut the run short, got %d/%d", len(results), len(payloads))
+	}
+}
+
 func TestSafeSendFuzzedRecovers(t *testing.T) {
 	// A payload with a malformed URL scheme forces buildRequest/Do down an
 	// error path rather than a panic; to exercise recover directly we call
@@ -134,7 +170,7 @@ func TestSafeSendFuzzedRecovers(t *testing.T) {
 	cfg := Config{Method: "GET", URL: "http://127.0.0.1:1/", Timeout: 1}
 	point := input.InjectionPoint{Name: "id", Location: input.LocQueryParam}
 	client := buildClient(cfg)
-	res := safeSendFuzzed(client, cfg, mutator.Payload{Value: "x", Point: point, Module: "test"}, false)
+	res := safeSendFuzzed(context.Background(), client, cfg, mutator.Payload{Value: "x", Point: point, Module: "test"}, false)
 	// Unreachable target => Error set, but no panic/crash.
 	if res.Error == nil {
 		t.Log("request unexpectedly succeeded; acceptable as long as no panic occurred")
