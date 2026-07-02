@@ -2,12 +2,50 @@ package vulns
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/renansj/ryofuzz/internal/input"
 	"github.com/renansj/ryofuzz/internal/mutator"
 	"github.com/renansj/ryofuzz/internal/util"
 )
+
+// sqlErrorSignatures are DBMS error fragments that indicate SQL injection.
+// Compiled once into sqlErrorRe (case-insensitive) rather than scanned as 35
+// separate substring lookups over a lowercased copy of every response (C4).
+var sqlErrorSignatures = []string{
+	"you have an error in your sql syntax",
+	"warning: mysql",
+	"unclosed quotation mark",
+	"quoted string not properly terminated",
+	"microsoft ole db provider for sql server",
+	"ora-01756", "ora-00933", "ora-01747",
+	"pg_query", "pg_exec", "postgresql",
+	"sqlite3.operationalerror", "sqlite_error",
+	"unrecognized token", "incomplete input", "near \"",
+	"no such column", "sqlite3.",
+	"sqlstate[", "sql syntax",
+	"mysql_fetch", "mysql_num_rows",
+	"supplied argument is not a valid mysql",
+	"syntax error at or near",
+	"unterminated quoted string",
+	"invalid query", "odbc sql server driver",
+	"microsoft access driver",
+	"jet database engine",
+	"org.hibernate", "javax.persistence",
+	"com.mysql.jdbc", "java.sql.sqlexception",
+	"near \"syntax\"", "incorrect syntax near",
+}
+
+var sqlErrorRe = buildSQLErrorRe()
+
+func buildSQLErrorRe() *regexp.Regexp {
+	quoted := make([]string, len(sqlErrorSignatures))
+	for i, s := range sqlErrorSignatures {
+		quoted[i] = regexp.QuoteMeta(s)
+	}
+	return regexp.MustCompile("(?i)" + strings.Join(quoted, "|"))
+}
 
 type SQLiModule struct{}
 
@@ -55,46 +93,21 @@ func (m *SQLiModule) GeneratePayloads(points []input.InjectionPoint, mode string
 func (m *SQLiModule) Detect(payload mutator.Payload, baseBody string, baseStatus int, baseTime int64,
 	respBody string, respStatus int, respTime int64, respHeaders map[string][]string) *Finding {
 
-	// Error-based detection
-	sqlErrors := []string{
-		"you have an error in your sql syntax",
-		"warning: mysql",
-		"unclosed quotation mark",
-		"quoted string not properly terminated",
-		"microsoft ole db provider for sql server",
-		"ora-01756", "ora-00933", "ora-01747",
-		"pg_query", "pg_exec", "postgresql",
-		"sqlite3.operationalerror", "sqlite_error",
-		"unrecognized token", "incomplete input", "near \"",
-		"no such column", "sqlite3.",
-		"sqlstate[", "sql syntax",
-		"mysql_fetch", "mysql_num_rows",
-		"supplied argument is not a valid mysql",
-		"syntax error at or near",
-		"unterminated quoted string",
-		"invalid query", "odbc sql server driver",
-		"microsoft access driver",
-		"jet database engine",
-		"org.hibernate", "javax.persistence",
-		"com.mysql.jdbc", "java.sql.sqlexception",
-		"near \"syntax\"", "incorrect syntax near",
-	}
-
-	bodyLower := strings.ToLower(respBody)
-	for _, errStr := range sqlErrors {
-		if strings.Contains(bodyLower, errStr) {
-			return &Finding{
-				Module:      "sqli",
-				Severity:    "critical",
-				Confidence:  "high",
-				Title:       "SQL Injection - Error-based",
-				Description: "Server returned SQL error indicating injection",
-				Payload:     payload.Value,
-				Point:       payload.Point,
-				Evidence:    errStr,
-				OWASP:       "A03:2021 Injection",
-				CWE:         "CWE-89",
-			}
+	// Error-based detection: a single case-insensitive regex compiled once
+	// (sqlErrorRe) instead of ToLower(body) + 35 substring scans per response
+	// (review C4). FindString gives us the matched signature for evidence.
+	if m := sqlErrorRe.FindString(respBody); m != "" {
+		return &Finding{
+			Module:      "sqli",
+			Severity:    "critical",
+			Confidence:  "high",
+			Title:       "SQL Injection - Error-based",
+			Description: "Server returned SQL error indicating injection",
+			Payload:     payload.Value,
+			Point:       payload.Point,
+			Evidence:    strings.ToLower(m),
+			OWASP:       "A03:2021 Injection",
+			CWE:         "CWE-89",
 		}
 	}
 
