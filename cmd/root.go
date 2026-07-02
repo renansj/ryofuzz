@@ -3,7 +3,6 @@ package cmd
 import (
 	"bufio"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -61,6 +60,11 @@ var (
 	rateLimit   int
 	maxRequests int
 	autoMode    bool
+
+	// Safety
+	allowDestructive bool
+	verifyTLS        bool
+	maxBodyKB        int
 
 	// Output
 	outputFile string
@@ -180,6 +184,11 @@ func init() {
 	rootCmd.Flags().IntVar(&maxRequests, "max-requests", 0, "Global cap on total payloads per target (0=unlimited)")
 	rootCmd.Flags().BoolVar(&autoMode, "auto", false, "Auto mode: crawl + all modules + taint + browser + waf-evade + chain")
 
+	// Safety
+	rootCmd.Flags().BoolVar(&allowDestructive, "allow-destructive", false, "Enable destructive payloads (DROP TABLE, xp_cmdshell, LOAD_FILE, UTL_HTTP). DANGEROUS: can delete data or run OS commands on a vulnerable target. Off by default.")
+	rootCmd.Flags().BoolVar(&verifyTLS, "verify-tls", false, "Verify TLS certificates (default: skip verification for pentest targets)")
+	rootCmd.Flags().IntVar(&maxBodyKB, "max-body", 10240, "Max response body read per request in KB (caps memory on huge/hostile bodies)")
+
 	// Output
 	rootCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file")
 	rootCmd.Flags().StringVar(&format, "format", "text", "Format: text, json, markdown, html, sarif")
@@ -263,6 +272,14 @@ func Execute() error {
 func run(cmd *cobra.Command, args []string) error {
 	startTime := time.Now()
 	banner()
+
+	// Destructive-payload gate (F1). Off by default; auto mode never enables it.
+	vulns.SetAllowDestructive(allowDestructive)
+	if allowDestructive {
+		fmt.Println("[!] WARNING: --allow-destructive enabled. Destructive SQLi payloads")
+		fmt.Println("[!] (DROP TABLE, xp_cmdshell, LOAD_FILE, UTL_HTTP) may delete data or")
+		fmt.Println("[!] execute OS commands on a vulnerable target. Ensure you are authorized.")
+	}
 
 	// --- Auto mode: enable everything non-destructive against one target ---
 	if autoMode {
@@ -469,9 +486,12 @@ func run(cmd *cobra.Command, args []string) error {
 		pluginDirs = append([]string{pluginsDir}, pluginDirs...)
 	}
 	loaded, err := plugins.LoadPlugins(pluginDirs)
-	if err == nil && len(loaded) > 0 {
+	if len(loaded) > 0 {
 		pluginModules = loaded
 		fmt.Printf("[*] Plugins loaded: %d\n", len(pluginModules))
+	}
+	if err != nil {
+		fmt.Printf("[!] Some plugins were skipped: %v\n", err)
 	}
 
 	// --- Targets para fuzzear ---
@@ -664,6 +684,8 @@ func run(cmd *cobra.Command, args []string) error {
 			Proxy:       proxy,
 			Timeout:     timeout,
 			FollowRedir: followRedir,
+			VerifyTLS:   verifyTLS,
+			MaxBody:     int64(maxBodyKB) * 1024,
 		}
 
 		// Aplicar auth se disponível
@@ -1011,7 +1033,7 @@ func run(cmd *cobra.Command, args []string) error {
 		if len(crawlTargets) > 0 {
 			scanTargets = append(scanTargets, crawlTargets...)
 		}
-		client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
+		client := engine.NewAuthedClient(timeout, staticAuthHeaders(), cookies, proxy, followRedir)
 		matches := tracker.InjectAndScan(client, injTargets, scanTargets)
 		for _, m := range matches {
 			allFindings = append(allFindings, &vulns.Finding{
@@ -1101,7 +1123,7 @@ func run(cmd *cobra.Command, args []string) error {
 			})
 		}
 		if len(identities) >= 2 {
-			client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
+			client := engine.NewAuthedClient(timeout, staticAuthHeaders(), cookies, proxy, followRedir)
 			testTargets := targets
 			for _, t := range testTargets {
 				azFindings := authz.TestEndpoint(client, method, t, body, identities)
