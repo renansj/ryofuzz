@@ -67,6 +67,8 @@ var (
 	allowDestructive bool
 	verifyTLS        bool
 	maxBodyKB        int
+	scopeHosts       []string
+	allowInternal    bool
 
 	// Output
 	outputFile string
@@ -190,6 +192,8 @@ func init() {
 	rootCmd.Flags().BoolVar(&allowDestructive, "allow-destructive", false, "Enable destructive payloads (DROP TABLE, xp_cmdshell, LOAD_FILE, UTL_HTTP). DANGEROUS: can delete data or run OS commands on a vulnerable target. Off by default.")
 	rootCmd.Flags().BoolVar(&verifyTLS, "verify-tls", false, "Verify TLS certificates (default: skip verification for pentest targets)")
 	rootCmd.Flags().IntVar(&maxBodyKB, "max-body", 10240, "Max response body read per request in KB (caps memory on huge/hostile bodies)")
+	rootCmd.Flags().StringSliceVar(&scopeHosts, "scope", nil, "Restrict requests to these hosts/domains (repeatable). Out-of-scope requests are refused.")
+	rootCmd.Flags().BoolVar(&allowInternal, "allow-internal", false, "Allow internal/private/metadata targets (RFC1918, loopback, 169.254.169.254). Off by default.")
 
 	// Output
 	rootCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file")
@@ -350,6 +354,16 @@ func run(cmd *cobra.Command, args []string) error {
 	if !crawlMode && workflowFile == "" && !proxyMode {
 		if err := httpx.ValidateTarget(targetURL); err != nil {
 			return err
+		}
+	}
+
+	// Target scope gate (F4). Opt-in via --scope: when set, the primary target
+	// must be in scope, and internal/metadata hosts are refused unless
+	// --allow-internal is given. Prevents scanning out-of-scope hosts.
+	if len(scopeHosts) > 0 {
+		sc := httpx.NewScope(scopeHosts, allowInternal)
+		if ok, reason := sc.Allowed(targetURL); !ok {
+			return fmt.Errorf("target out of scope: %v (adjust --scope or pass --allow-internal)", reason)
 		}
 	}
 
