@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/renansj/ryofuzz/internal/analyzer"
+	"github.com/renansj/ryofuzz/internal/app"
 	"github.com/renansj/ryofuzz/internal/auth"
 	"github.com/renansj/ryofuzz/internal/authz"
 	"github.com/renansj/ryofuzz/internal/behavioral"
@@ -1356,10 +1357,7 @@ func banner() {
 }
 
 func parseTests(t string) []string {
-	if t == "all" {
-		return []string{"all"}
-	}
-	return strings.Split(t, ",")
+	return app.ParseTests(t)
 }
 
 // staticAuthHeaders returns auth headers derivable from flags without a login
@@ -1415,33 +1413,7 @@ func (a *interactshAdapter) Poll(id string) (string, string, bool) {
 // interleaveByModule distributes a request budget fairly across modules by
 // round-robin, so a large early module does not starve later ones.
 func interleaveByModule(payloads []mutator.Payload, limit int) []mutator.Payload {
-	groups := map[string][]mutator.Payload{}
-	var order []string
-	for _, p := range payloads {
-		if _, ok := groups[p.Module]; !ok {
-			order = append(order, p.Module)
-		}
-		groups[p.Module] = append(groups[p.Module], p)
-	}
-	var out []mutator.Payload
-	idx := map[string]int{}
-	for len(out) < limit {
-		progressed := false
-		for _, m := range order {
-			if idx[m] < len(groups[m]) {
-				out = append(out, groups[m][idx[m]])
-				idx[m]++
-				progressed = true
-				if len(out) >= limit {
-					break
-				}
-			}
-		}
-		if !progressed {
-			break
-		}
-	}
-	return out
+	return app.InterleaveByModule(payloads, limit)
 }
 
 
