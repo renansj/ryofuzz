@@ -1,6 +1,7 @@
 package authz
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -32,12 +33,15 @@ type AuthzFinding struct {
 }
 
 // TestEndpoint sends the same request with each identity and compares
-func TestEndpoint(client *http.Client, method, url string, body string, identities []Identity) []AuthzFinding {
+func TestEndpoint(ctx context.Context, client *http.Client, method, url string, body string, identities []Identity) []AuthzFinding {
 	var results []AccessResult
 	var findings []AuthzFinding
 
 	for _, id := range identities {
-		req, err := http.NewRequest(method, url, strings.NewReader(body))
+		if ctx.Err() != nil {
+			break
+		}
+		req, err := http.NewRequestWithContext(ctx, method, url, strings.NewReader(body))
 		if err != nil {
 			continue
 		}

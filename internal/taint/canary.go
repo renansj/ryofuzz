@@ -2,6 +2,7 @@ package taint
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -121,8 +122,11 @@ func (t *Tracker) applyHeaders(req *http.Request) {
 // Inject seeds a unique canary into each parameter of each injection target.
 // This is the write phase of stored/second-order detection: the canary is
 // actually sent to the server so it can be persisted.
-func (t *Tracker) Inject(client *http.Client, targets []InjectionTarget) {
+func (t *Tracker) Inject(ctx context.Context, client *http.Client, targets []InjectionTarget) {
 	for _, tgt := range targets {
+		if ctx.Err() != nil {
+			return
+		}
 		method := tgt.Method
 		if method == "" {
 			method = "GET"
@@ -150,7 +154,7 @@ func (t *Tracker) Inject(client *http.Client, targets []InjectionTarget) {
 			if reqBody != "" {
 				bodyReader = bytes.NewReader([]byte(reqBody))
 			}
-			req, err := http.NewRequest(method, reqURL, bodyReader)
+			req, err := http.NewRequestWithContext(ctx, method, reqURL, bodyReader)
 			if err != nil {
 				continue
 			}
@@ -170,10 +174,13 @@ func (t *Tracker) Inject(client *http.Client, targets []InjectionTarget) {
 
 // ScanEndpoints visits all endpoints and checks for canaries in their responses.
 // This is the read phase: canaries injected earlier may now surface elsewhere.
-func (t *Tracker) ScanEndpoints(client *http.Client, endpoints []string) []CanaryMatch {
+func (t *Tracker) ScanEndpoints(ctx context.Context, client *http.Client, endpoints []string) []CanaryMatch {
 	var allMatches []CanaryMatch
 	for _, ep := range endpoints {
-		req, err := http.NewRequest("GET", ep, nil)
+		if ctx.Err() != nil {
+			break
+		}
+		req, err := http.NewRequestWithContext(ctx, "GET", ep, nil)
 		if err != nil {
 			continue
 		}
@@ -192,9 +199,9 @@ func (t *Tracker) ScanEndpoints(client *http.Client, endpoints []string) []Canar
 
 // InjectAndScan performs the full two-phase flow: inject canaries into the
 // targets, then scan all endpoints for where those canaries resurface.
-func (t *Tracker) InjectAndScan(client *http.Client, targets []InjectionTarget, scanEndpoints []string) []CanaryMatch {
-	t.Inject(client, targets)
-	return t.ScanEndpoints(client, scanEndpoints)
+func (t *Tracker) InjectAndScan(ctx context.Context, client *http.Client, targets []InjectionTarget, scanEndpoints []string) []CanaryMatch {
+	t.Inject(ctx, client, targets)
+	return t.ScanEndpoints(ctx, client, scanEndpoints)
 }
 
 // --- injection helpers ---

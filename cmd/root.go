@@ -471,7 +471,7 @@ func run(cmd *cobra.Command, args []string) error {
 			Headers:      headers,
 			Cookies:      cookies,
 		}
-		result, err := crawler.Crawl(crawlCfg)
+		result, err := crawler.CrawlContext(ctx, crawlCfg)
 		if err != nil {
 			fmt.Printf("[-] Crawler error: %v\n", err)
 		} else {
@@ -1047,7 +1047,7 @@ func run(cmd *cobra.Command, args []string) error {
 			scanTargets = append(scanTargets, crawlTargets...)
 		}
 		client := engine.NewAuthedClient(timeout, staticAuthHeaders(), cookies, proxy, followRedir)
-		matches := tracker.InjectAndScan(client, injTargets, scanTargets)
+		matches := tracker.InjectAndScan(ctx, client, injTargets, scanTargets)
 		for _, m := range matches {
 			allFindings = append(allFindings, &vulns.Finding{
 				Module:     "taint",
@@ -1139,7 +1139,7 @@ func run(cmd *cobra.Command, args []string) error {
 			client := engine.NewAuthedClient(timeout, staticAuthHeaders(), cookies, proxy, followRedir)
 			testTargets := targets
 			for _, t := range testTargets {
-				azFindings := authz.TestEndpoint(client, method, t, body, identities)
+				azFindings := authz.TestEndpoint(ctx, client, method, t, body, identities)
 				for _, af := range azFindings {
 					allFindings = append(allFindings, &vulns.Finding{
 						Module:     "authz",

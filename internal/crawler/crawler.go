@@ -1,6 +1,7 @@
 package crawler
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -64,6 +65,7 @@ type crawler struct {
 	config     CrawlConfig
 	baseURL    *url.URL
 	client     *http.Client
+	ctx        context.Context
 	visited    map[string]bool
 	mu         sync.Mutex
 	result     *CrawlResult
@@ -72,6 +74,12 @@ type crawler struct {
 
 // Crawl performs web crawling starting from the seed URL.
 func Crawl(config CrawlConfig) (*CrawlResult, error) {
+	return CrawlContext(context.Background(), config)
+}
+
+// CrawlContext is the cancellable form of Crawl. When ctx is cancelled the
+// workers stop pulling new URLs and in-flight fetches are aborted (review B1).
+func CrawlContext(ctx context.Context, config CrawlConfig) (*CrawlResult, error) {
 	parsed, err := url.Parse(config.SeedURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid seed URL: %w", err)
@@ -80,6 +88,7 @@ func Crawl(config CrawlConfig) (*CrawlResult, error) {
 	c := &crawler{
 		config:  config,
 		baseURL: parsed,
+		ctx:     ctx,
 		client: httpx.New(httpx.Options{
 			TimeoutSec: config.Timeout,
 			Proxy:      config.Proxy,
@@ -109,6 +118,9 @@ func Crawl(config CrawlConfig) (*CrawlResult, error) {
 		go func() {
 			defer wg.Done()
 			for task := range queue {
+				if c.ctx.Err() != nil {
+					continue // drain quietly once cancelled
+				}
 				c.processURL(task, queue)
 			}
 		}()
@@ -117,16 +129,17 @@ func Crawl(config CrawlConfig) (*CrawlResult, error) {
 	queue <- crawlTask{url: config.SeedURL, depth: 0}
 	c.markVisited(config.SeedURL)
 
-	// Monitor: close queue when no more work
+	// Monitor: close queue when no more work. On cancellation the workers
+	// stop enqueuing, so the queue drains and this same check closes it.
 	go func() {
 		for {
 			time.Sleep(500 * time.Millisecond)
 			c.mu.Lock()
 			qLen := len(queue)
 			c.mu.Unlock()
-			if qLen == 0 {
+			if qLen == 0 || c.ctx.Err() != nil {
 				time.Sleep(1 * time.Second)
-				if len(queue) == 0 {
+				if len(queue) == 0 || c.ctx.Err() != nil {
 					close(queue)
 					return
 				}
@@ -166,7 +179,11 @@ func (c *crawler) isDisallowed(path string) bool {
 }
 
 func (c *crawler) fetch(targetURL string) (string, int, error) {
-	req, err := http.NewRequest("GET", targetURL, nil)
+	ctx := c.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
 	if err != nil {
 		return "", 0, err
 	}
