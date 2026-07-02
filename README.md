@@ -470,6 +470,10 @@ Response bodies are read with a size cap (`--max-body`, default 10 MB) so a
 huge or hostile response cannot exhaust memory. TLS verification is skipped by
 default for pentest targets; pass `--verify-tls` to enforce it.
 
+Press Ctrl+C to stop a scan cleanly: in-flight requests are aborted, no new
+payloads are sent, and the partial report is printed instead of the process
+being killed and the results lost.
+
 ![ryofuzz demo](./ryofuzz-demo.gif)
 ## Full CLI reference
 
