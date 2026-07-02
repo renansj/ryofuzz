@@ -447,6 +447,29 @@ Route traffic through Burp Suite or ZAP:
 ryofuzz -u "http://target/api?id=1" -t all --proxy http://127.0.0.1:8080
 ```
 
+All subsystems (engine, crawler, taint, authz, nuclei, confirmation) share
+one HTTP client factory, so `--proxy` and TLS settings apply everywhere. No
+request path silently bypasses the proxy.
+
+### Safety controls
+
+By default ryofuzz never sends payloads that can damage a target. Destructive
+SQLi payloads (DROP TABLE, stacked writes, xp_cmdshell, LOAD_FILE, UTL_HTTP)
+are held back unless you pass `--allow-destructive`, which prints a warning
+before running. Auto mode never enables them.
+
+```bash
+# Default: safe payloads only
+ryofuzz -u "http://target/product?id=1" -t sqli
+
+# Opt in to destructive payloads (authorized engagements only)
+ryofuzz -u "http://target/product?id=1" -t sqli --allow-destructive
+```
+
+Response bodies are read with a size cap (`--max-body`, default 10 MB) so a
+huge or hostile response cannot exhaust memory. TLS verification is skipped by
+default for pentest targets; pass `--verify-tls` to enforce it.
+
 ![ryofuzz demo](./ryofuzz-demo.gif)
 ## Full CLI reference
 
@@ -472,6 +495,11 @@ Fuzzing:
       --max-requests int     Global cap on total payloads per target (0=unlimited)
       --auto                 Auto mode: crawl + all modules + taint + browser + waf-evade + chain
       --follow               Follow redirects
+
+Safety:
+      --allow-destructive    Enable destructive payloads (DROP TABLE, xp_cmdshell, LOAD_FILE, UTL_HTTP). Off by default.
+      --verify-tls           Verify TLS certificates (default: skip verification for pentest targets)
+      --max-body int         Max response body read per request in KB (default 10240)
 
 Output:
   -o, --output string        Output file
