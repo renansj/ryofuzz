@@ -6,6 +6,7 @@ import (
 
 	"github.com/renansj/ryofuzz/internal/input"
 	"github.com/renansj/ryofuzz/internal/mutator"
+	"github.com/renansj/ryofuzz/internal/util"
 )
 
 // ===== LFI / Path Traversal =====
@@ -89,11 +90,11 @@ func (m *NoSQLiModule) Detect(payload mutator.Payload, baseBody string, baseStat
 			Evidence: fmt.Sprintf("delta=%dms", respTime-baseTime), OWASP: "A03:2021 Injection", CWE: "CWE-943"}
 	}
 	// Body diff significativo (auth bypass)
-	if len(respBody) != len(baseBody) && abs(len(respBody)-len(baseBody)) > 100 && respStatus == 200 {
+	if len(respBody) != len(baseBody) && util.Abs(len(respBody)-len(baseBody)) > 100 && respStatus == 200 {
 		if strings.Contains(payload.Variant, "bypass") || strings.Contains(payload.Variant, "ne") || strings.Contains(payload.Variant, "gt") {
 			return &Finding{Module: "nosqli", Severity: "high", Confidence: "medium",
 				Title: "NoSQL Injection - Possible auth bypass", Payload: payload.Value, Point: payload.Point,
-				Evidence: fmt.Sprintf("body_diff=%d bytes", abs(len(respBody)-len(baseBody))), OWASP: "A03:2021 Injection", CWE: "CWE-943"}
+				Evidence: fmt.Sprintf("body_diff=%d bytes", util.Abs(len(respBody)-len(baseBody))), OWASP: "A03:2021 Injection", CWE: "CWE-943"}
 		}
 	}
 	return nil
@@ -163,7 +164,7 @@ func (m *IDORModule) Detect(payload mutator.Payload, baseBody string, baseStatus
 		return &Finding{Module: "idor", Severity: "high", Confidence: "medium",
 			Title: "IDOR - Access to another user object", Payload: payload.Value, Point: payload.Point,
 			Evidence: fmt.Sprintf("status=200, body diferente (len=%d vs baseline=%d)", len(respBody), len(baseBody)),
-			OWASP: "A01:2021 Broken Access Control", CWE: "CWE-639"}
+			OWASP:    "A01:2021 Broken Access Control", CWE: "CWE-639"}
 	}
 	return nil
 }

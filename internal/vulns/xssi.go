@@ -114,10 +114,3 @@ func (m *XSSIModule) Detect(payload mutator.Payload, baseBody string, baseStatus
 		CWE:         "CWE-352",
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
