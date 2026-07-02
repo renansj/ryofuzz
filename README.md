@@ -68,7 +68,7 @@ go build -ldflags="-s -w" -o ryofuzz . && sudo mv ryofuzz /usr/local/bin/
 ```
 
 ![ryofuzz demo](./ryofuzz-demo.gif)
-Requires Go 1.22+. Headless browser mode requires Chromium installed.
+Requires Go 1.26+. Headless browser mode requires Chromium installed.
 
 ## Modes
 
