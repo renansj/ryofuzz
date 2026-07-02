@@ -4,7 +4,7 @@ Offensive web vulnerability fuzzer. Discovers unknown bugs through behavioral an
 
 ```
   ╔═══════════════════════════════════════════╗
-  ║             ryofuzz v1.0.15               ║
+  ║             ryofuzz v1.1.0               ║
   ║    Offensive Web Vulnerability Fuzzer     ║
   ║    github.com/renansj/ryofuzz             ║
   ╚═══════════════════════════════════════════╝
@@ -32,7 +32,7 @@ Plus capabilities no other open source tool combines in one CLI:
 - OOB callbacks via HTTP and DNS
 - Optional LLM-assisted payload generation and triage
 
-## What is new in v1.0.15
+## What is new in v1.1.0
 
 | Capability | Flag | Description |
 |-----------|------|-------------|
