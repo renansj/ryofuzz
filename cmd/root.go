@@ -20,6 +20,7 @@ import (
 	"github.com/renansj/ryofuzz/internal/crawler"
 	"github.com/renansj/ryofuzz/internal/engine"
 	"github.com/renansj/ryofuzz/internal/fuzzer"
+	"github.com/renansj/ryofuzz/internal/httpx"
 	"github.com/renansj/ryofuzz/internal/input"
 	"github.com/renansj/ryofuzz/internal/llm"
 	"github.com/renansj/ryofuzz/internal/logger"
@@ -338,6 +339,17 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 		if targetURL == "" {
 			return fmt.Errorf("target URL required: use -u or pipe via stdin")
+		}
+	}
+
+	// Validate target and proxy up front so a malformed value fails here with a
+	// clear message instead of producing broken requests mid-scan (review D3).
+	if err := httpx.ValidateProxy(proxy); err != nil {
+		return err
+	}
+	if !crawlMode && workflowFile == "" && !proxyMode {
+		if err := httpx.ValidateTarget(targetURL); err != nil {
+			return err
 		}
 	}
 
