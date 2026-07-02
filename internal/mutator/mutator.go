@@ -68,7 +68,7 @@ func applyMutation(value string, strategy int) string {
 		tricks := []string{
 			"\uff1c\uff53\uff43\uff52\uff49\uff50\uff54\uff1e", // fullwidth <script>
 			"\u0000", "\u200b", "\u200d", "\ufeff", "\u202e",
-			"\uff0e\uff0e\uff0f", // fullwidth ../
+			"\uff0e\uff0e\uff0f",    // fullwidth ../
 			"ﬀ", "ﬁ", "ﬂ", "ﬃ", "ﬄ", // ligatures
 			"\u0041\u030A", // A + combining ring = looks like Å
 		}
@@ -187,11 +187,4 @@ func mixCase(s string) string {
 		}
 	}
 	return result.String()
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
