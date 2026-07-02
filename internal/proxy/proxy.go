@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/renansj/ryofuzz/internal/input"
+	"github.com/renansj/ryofuzz/internal/util"
 	"github.com/renansj/ryofuzz/internal/vulns"
 )
 
@@ -205,7 +206,7 @@ func (p *Proxy) proxyAndFuzz(w http.ResponseWriter, r *http.Request) {
 	// Read body for replay
 	var bodyBytes []byte
 	if r.Body != nil {
-		bodyBytes, _ = io.ReadAll(r.Body)
+		bodyBytes, _ = util.ReadBodyLimited(r.Body, 0)
 		r.Body.Close()
 	}
 
@@ -225,7 +226,7 @@ func (p *Proxy) proxyAndFuzz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, _ := util.ReadBodyLimited(resp.Body, 0)
 
 	// Record endpoint for recon spec (passive, always on)
 	p.recorder.Record(r, bodyBytes, resp.StatusCode)
@@ -328,7 +329,7 @@ func (p *Proxy) lightFuzz(r *http.Request, reqBody []byte, origResp *http.Respon
 			if err != nil {
 				continue
 			}
-			b, _ := io.ReadAll(resp2.Body)
+			b, _ := util.ReadBodyLimited(resp2.Body, 0)
 			resp2.Body.Close()
 
 			if f := probe.detect(string(b), resp2.StatusCode); f != nil {
@@ -343,8 +344,8 @@ func (p *Proxy) lightFuzz(r *http.Request, reqBody []byte, origResp *http.Respon
 func (p *Proxy) passiveChecks(targetURL string, resp *http.Response, body []byte) {
 	// Missing security headers
 	headers := map[string]string{
-		"Content-Security-Policy": "Missing CSP header",
-		"X-Frame-Options":        "Missing X-Frame-Options header",
+		"Content-Security-Policy":   "Missing CSP header",
+		"X-Frame-Options":           "Missing X-Frame-Options header",
 		"Strict-Transport-Security": "Missing HSTS header",
 	}
 	for h, title := range headers {
@@ -372,9 +373,9 @@ func (p *Proxy) passiveChecks(targetURL string, resp *http.Response, body []byte
 	// Sensitive data patterns
 	bodyStr := string(body)
 	patterns := map[string]*regexp.Regexp{
-		"JWT token leaked":     regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`),
-		"API key pattern":      regexp.MustCompile(`(?i)(api[_-]?key|apikey|api_secret)["\s:=]+["\s]*[A-Za-z0-9]{16,}`),
-		"Stack trace exposed":  regexp.MustCompile(`(?i)(goroutine \d+|at \w+\.\w+\(|Traceback \(most recent|Exception in thread)`),
+		"JWT token leaked":    regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`),
+		"API key pattern":     regexp.MustCompile(`(?i)(api[_-]?key|apikey|api_secret)["\s:=]+["\s]*[A-Za-z0-9]{16,}`),
+		"Stack trace exposed": regexp.MustCompile(`(?i)(goroutine \d+|at \w+\.\w+\(|Traceback \(most recent|Exception in thread)`),
 	}
 	for title, re := range patterns {
 		if m := re.FindString(bodyStr); m != "" {

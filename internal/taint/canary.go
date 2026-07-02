@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/renansj/ryofuzz/internal/util"
 )
 
 // CanarySource tracks where a canary was injected
@@ -180,7 +182,7 @@ func (t *Tracker) ScanEndpoints(client *http.Client, endpoints []string) []Canar
 		if err != nil {
 			continue
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := util.ReadBodyLimited(resp.Body, 0)
 		resp.Body.Close()
 		matches := t.Scan(string(body), ep)
 		allMatches = append(allMatches, matches...)

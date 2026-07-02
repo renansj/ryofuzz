@@ -3,11 +3,12 @@ package auth
 import (
 	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/renansj/ryofuzz/internal/util"
 )
 
 type AuthConfig struct {
@@ -79,7 +80,7 @@ func (s *Session) doLogin() error {
 
 	// Extrair token do corpo JSON se TokenField configurado
 	if s.Config.TokenField != "" {
-		body, err := io.ReadAll(resp.Body)
+		body, err := util.ReadBodyLimited(resp.Body, 0)
 		if err != nil {
 			return err
 		}
@@ -184,7 +185,7 @@ func (s *Session) Refresh() error {
 		defer resp.Body.Close()
 
 		if s.Config.TokenField != "" {
-			body, _ := io.ReadAll(resp.Body)
+			body, _ := util.ReadBodyLimited(resp.Body, 0)
 			var data map[string]interface{}
 			if err := json.Unmarshal(body, &data); err == nil {
 				if val, ok := data[s.Config.TokenField]; ok {

@@ -3,10 +3,11 @@ package schema
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/renansj/ryofuzz/internal/util"
 )
 
 type OpenAPISpec struct {
@@ -39,10 +40,10 @@ type MediaType struct {
 }
 
 type SchemaObj struct {
-	Type       string               `json:"type"`
+	Type       string                `json:"type"`
 	Properties map[string]*SchemaObj `json:"properties"`
-	Items      *SchemaObj           `json:"items"`
-	Example    interface{}          `json:"example"`
+	Items      *SchemaObj            `json:"items"`
+	Example    interface{}           `json:"example"`
 }
 
 // Target represents a fuzzable endpoint extracted from spec
@@ -73,7 +74,7 @@ func LoadFromURL(specURL string) (*OpenAPISpec, error) {
 			return nil, err
 		}
 		defer resp.Body.Close()
-		data, _ = io.ReadAll(resp.Body)
+		data, _ = util.ReadBodyLimited(resp.Body, 0)
 	}
 
 	var spec OpenAPISpec

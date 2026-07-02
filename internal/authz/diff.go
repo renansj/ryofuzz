@@ -2,10 +2,11 @@ package authz
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/renansj/ryofuzz/internal/util"
 )
 
 type Identity struct {
@@ -54,7 +55,7 @@ func TestEndpoint(client *http.Client, method, url string, body string, identiti
 			results = append(results, AccessResult{Identity: id.Name, StatusCode: 0})
 			continue
 		}
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := util.ReadBodyLimited(resp.Body, 0)
 		resp.Body.Close()
 
 		hasData := len(respBody) > 100 && resp.StatusCode < 400

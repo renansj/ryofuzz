@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/renansj/ryofuzz/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -116,7 +117,7 @@ func execStep(client *http.Client, step Step, vars map[string]string) (*http.Res
 		return nil, ""
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
+	b, _ := util.ReadBodyLimited(resp.Body, 0)
 	return resp, string(b)
 }
 
