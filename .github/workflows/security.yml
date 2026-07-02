@@ -28,6 +28,15 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # golangci-lint (staticcheck, ineffassign, errcheck, unused, gocritic).
+      # Advisory for now: there is pre-existing lint debt to clear before this
+      # can be a hard gate. Remove continue-on-error once the tree is clean (H2).
+      - name: golangci-lint (advisory)
+        continue-on-error: true
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
       # gosec stays advisory: an offensive tool intentionally uses patterns
       # static analyzers flag (InsecureSkipVerify for pentest targets, permissive
       # file modes for reports). G104 (unhandled errors) is NOT excluded so that

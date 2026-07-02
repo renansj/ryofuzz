@@ -1,0 +1,33 @@
+# golangci-lint configuration for ryofuzz.
+# Introduced advisory-first (see .github/workflows/security.yml): the linter
+# runs on every push but does not yet fail the build, because there is
+# pre-existing lint debt to clear first. Once the tree is clean, drop the
+# continue-on-error in CI to make this a hard gate (review H2).
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - staticcheck   # correctness and simplifications
+    - ineffassign   # ineffectual assignments
+    - errcheck      # unchecked errors
+    - unused        # dead code
+    - gocritic      # opinionated diagnostics
+    - misspell
+
+linters-settings:
+  errcheck:
+    # Best-effort output writes and body closes are intentional in a CLI tool.
+    exclude-functions:
+      - (net/http.ResponseWriter).Write
+      - fmt.Fprintf
+      - fmt.Fprintln
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    # Offensive tooling intentionally uses weak crypto/TLS-skip in places.
+    - linters: [gocritic]
+      text: "InsecureSkipVerify"
