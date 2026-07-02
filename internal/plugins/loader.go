@@ -2,18 +2,46 @@ package plugins
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/renansj/ryofuzz/internal/input"
 	"github.com/renansj/ryofuzz/internal/mutator"
 	"github.com/renansj/ryofuzz/internal/vulns"
 	"gopkg.in/yaml.v3"
 )
+
+// regexMatchTimeout bounds a single regex evaluation against a response body.
+// Go's regexp is RE2 (linear time) so catastrophic backtracking is impossible,
+// but a pathological pattern over a large body can still burn CPU; combined
+// with the bounded body read (util.ReadBodyLimited) this caps the blast radius
+// of a hostile plugin pattern or adversarial response (ReDoS defense, F2).
+const regexMatchTimeout = 2 * time.Second
+
+// validMethods is the closed set of detection methods a plugin may declare.
+var validMethods = map[string]bool{
+	"contains": true,
+	"regex":    true,
+	"status":   true,
+	"time":     true,
+	"header":   true,
+}
+
+// validSeverities is the closed set of severities a plugin may declare.
+var validSeverities = map[string]bool{
+	"critical": true,
+	"high":     true,
+	"medium":   true,
+	"low":      true,
+	"info":     true,
+}
 
 type Plugin struct {
 	Name        string          `yaml:"name"`
@@ -46,6 +74,9 @@ type PluginDetection struct {
 // PluginModule implementa vulns.VulnModule para plugins YAML
 type PluginModule struct {
 	plugin *Plugin
+	// regexes are pre-compiled once at load time (C2/F2) instead of on every
+	// response. A plugin whose patterns fail to compile is rejected at load.
+	regexes []*regexp.Regexp
 }
 
 func (m *PluginModule) Name() string        { return m.plugin.Module }
@@ -75,15 +106,16 @@ func (m *PluginModule) Detect(payload mutator.Payload, baselineBody string, base
 
 	switch d.Method {
 	case "contains":
+		lowerBody := strings.ToLower(respBody)
 		for _, p := range d.Patterns {
-			if strings.Contains(strings.ToLower(respBody), strings.ToLower(p)) {
+			if strings.Contains(lowerBody, strings.ToLower(p)) {
 				matched = true
 				break
 			}
 		}
 	case "regex":
-		for _, p := range d.Patterns {
-			if re, err := regexp.Compile(p); err == nil && re.MatchString(respBody) {
+		for _, re := range m.regexes {
+			if matchWithTimeout(re, respBody) {
 				matched = true
 				break
 			}
@@ -93,12 +125,21 @@ func (m *PluginModule) Detect(payload mutator.Payload, baselineBody string, base
 	case "time":
 		matched = respTime-baselineTime >= int64(d.TimeDelay)
 	case "header":
-		if vals, ok := respHeaders[strings.ToLower(d.HeaderName)]; ok {
+		// Canonicalize the lookup the way net/http stores header keys so a
+		// plugin's header_name matches regardless of casing (J2).
+		canonical := http.CanonicalHeaderKey(d.HeaderName)
+		for k, vals := range respHeaders {
+			if http.CanonicalHeaderKey(k) != canonical {
+				continue
+			}
 			for _, v := range vals {
 				if strings.Contains(v, d.HeaderVal) {
 					matched = true
 					break
 				}
+			}
+			if matched {
+				break
 			}
 		}
 	}
@@ -125,32 +166,68 @@ func (m *PluginModule) Detect(payload mutator.Payload, baselineBody string, base
 	}
 }
 
-// LoadPlugins carrega todos os plugins dos diretórios especificados
+// matchWithTimeout runs re.MatchString under a wall-clock deadline so a single
+// evaluation cannot hang a fuzzing goroutine indefinitely (F2). RE2 guarantees
+// linear time, so this is a belt-and-suspenders cap for pathological inputs.
+func matchWithTimeout(re *regexp.Regexp, body string) bool {
+	done := make(chan bool, 1)
+	go func() {
+		defer func() {
+			// A panic inside regexp is not expected, but never let it escape
+			// this helper goroutine and crash the process.
+			if r := recover(); r != nil {
+				done <- false
+			}
+		}()
+		done <- re.MatchString(body)
+	}()
+	select {
+	case res := <-done:
+		return res
+	case <-time.After(regexMatchTimeout):
+		return false
+	}
+}
+
+// LoadPlugins loads every plugin from the given directories. A single broken
+// plugin no longer aborts the whole load (J1): invalid plugins are logged to
+// stderr and skipped, and the successfully loaded modules are returned together
+// with an aggregated error describing what was skipped.
 func LoadPlugins(dirs []string) ([]vulns.VulnModule, error) {
 	var modules []vulns.VulnModule
+	var loadErrs []error
+
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, fmt.Errorf("failed to read directory %s: %w", dir, err)
+			loadErrs = append(loadErrs, fmt.Errorf("failed to read directory %s: %w", dir, err))
+			continue
 		}
 		for _, entry := range entries {
 			if entry.IsDir() || (!strings.HasSuffix(entry.Name(), ".yaml") && !strings.HasSuffix(entry.Name(), ".yml")) {
 				continue
 			}
-			p, err := LoadPlugin(filepath.Join(dir, entry.Name()))
+			path := filepath.Join(dir, entry.Name())
+			mod, err := LoadModule(path)
 			if err != nil {
-				return nil, fmt.Errorf("erro ao carregar plugin %s: %w", entry.Name(), err)
+				fmt.Fprintf(os.Stderr, "[!] skipping plugin %s: %v\n", entry.Name(), err)
+				loadErrs = append(loadErrs, fmt.Errorf("%s: %w", entry.Name(), err))
+				continue
 			}
-			modules = append(modules, p.ToModule())
+			modules = append(modules, mod)
 		}
+	}
+
+	if len(loadErrs) > 0 {
+		return modules, fmt.Errorf("%d plugin(s) skipped: %w", len(loadErrs), errors.Join(loadErrs...))
 	}
 	return modules, nil
 }
 
-// LoadPlugin carrega um único plugin de um arquivo YAML
+// LoadPlugin loads and validates a single plugin from a YAML file.
 func LoadPlugin(path string) (*Plugin, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -160,15 +237,52 @@ func LoadPlugin(path string) (*Plugin, error) {
 	if err := yaml.Unmarshal(data, &p); err != nil {
 		return nil, fmt.Errorf("YAML inválido em %s: %w", path, err)
 	}
-	if p.Name == "" || p.Module == "" {
-		return nil, fmt.Errorf("plugin %s: 'name' e 'module' são obrigatórios", path)
+	if err := validatePlugin(&p); err != nil {
+		return nil, err
 	}
 	return &p, nil
 }
 
-// ToModule converte um Plugin para VulnModule
-func (p *Plugin) ToModule() vulns.VulnModule {
-	return &PluginModule{plugin: p}
+// LoadModule loads a plugin file and returns a ready-to-use VulnModule with its
+// regexes already compiled. Compilation failures are surfaced as load errors so
+// a bad pattern fails loudly at startup instead of silently never matching.
+func LoadModule(path string) (vulns.VulnModule, error) {
+	p, err := LoadPlugin(path)
+	if err != nil {
+		return nil, err
+	}
+	return p.ToModule()
+}
+
+// validatePlugin enforces the plugin schema (J2): required fields plus a closed
+// set of detection methods and severities.
+func validatePlugin(p *Plugin) error {
+	if p.Name == "" || p.Module == "" {
+		return errors.New("'name' e 'module' são obrigatórios")
+	}
+	if p.Detection.Method != "" && !validMethods[p.Detection.Method] {
+		return fmt.Errorf("detection.method %q inválido (use: contains, regex, status, time, header)", p.Detection.Method)
+	}
+	if p.Severity != "" && !validSeverities[strings.ToLower(p.Severity)] {
+		return fmt.Errorf("severity %q inválida (use: critical, high, medium, low, info)", p.Severity)
+	}
+	return nil
+}
+
+// ToModule converts a Plugin to a VulnModule, pre-compiling its regex patterns
+// once (C2). Returns an error if any pattern is invalid.
+func (p *Plugin) ToModule() (vulns.VulnModule, error) {
+	m := &PluginModule{plugin: p}
+	if p.Detection.Method == "regex" {
+		for _, pat := range p.Detection.Patterns {
+			re, err := regexp.Compile(pat)
+			if err != nil {
+				return nil, fmt.Errorf("regex inválida %q: %w", pat, err)
+			}
+			m.regexes = append(m.regexes, re)
+		}
+	}
+	return m, nil
 }
 
 func encodePayload(value, encoding string) string {
