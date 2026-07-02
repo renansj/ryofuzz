@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -272,6 +273,12 @@ func Execute() error {
 func run(cmd *cobra.Command, args []string) error {
 	startTime := time.Now()
 	banner()
+
+	// Cancellable scan context: Ctrl+C (SIGINT) or SIGTERM stops the scan
+	// cleanly, aborting in-flight requests instead of killing the process
+	// mid-write and losing results (review B1).
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	// Destructive-payload gate (F1). Off by default; auto mode never enables it.
 	vulns.SetAllowDestructive(allowDestructive)
@@ -649,6 +656,12 @@ func run(cmd *cobra.Command, args []string) error {
 			fmt.Printf("\n[*] Fuzzing: %s\n", target)
 		}
 
+		// Stop between targets if the scan was cancelled (Ctrl+C).
+		if ctx.Err() != nil {
+			fmt.Fprintln(os.Stderr, "\n[!] Scan cancelled, stopping.")
+			break
+		}
+
 		// Parse injection points
 		points, err := input.Parse(target, method, body, headers, cookies)
 		if err != nil {
@@ -699,7 +712,7 @@ func run(cmd *cobra.Command, args []string) error {
 		if target == targetURL {
 			fmt.Println("[*] Capturing baseline...")
 		}
-		baseline, err := engine.CaptureBaseline(cfg)
+		baseline, err := engine.CaptureBaselineContext(ctx, cfg)
 		if err != nil {
 			if target == targetURL {
 				return fmt.Errorf("target unreachable: %v (is the server running?)", err)
@@ -810,7 +823,7 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 
 		// Execute fuzzing
-		results := engine.Fuzz(cfg, points, allPayloads, concurrency, delay, rateLimit, verbose)
+		results := engine.FuzzContext(ctx, cfg, points, allPayloads, concurrency, delay, rateLimit, verbose)
 		totalRequests += len(results)
 
 		// Log all requests/responses
