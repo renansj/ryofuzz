@@ -1,11 +1,21 @@
 name: Release
 
+# Release on an explicit tag push (v1.2.3) or manual dispatch. This replaces
+# the previous "release on every push to main" trigger, which auto-bumped the
+# version, tagged, and pushed back to main on each commit (review H3). Cutting
+# a release is now a deliberate act: `git tag v1.2.3 && git push origin v1.2.3`.
 on:
   push:
-    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to release (e.g. v1.2.3)'
+        required: true
 
 permissions:
   contents: write
+  id-token: write # required for cosign keyless signing
 
 jobs:
   test:
@@ -14,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
       - name: Verify dependencies
         run: go mod verify
       - name: Vet
@@ -22,7 +32,7 @@ jobs:
       - name: Build
         run: go build -o /dev/null .
       - name: Test
-        run: go test ./... -race -timeout 30s
+        run: go test ./... -race -timeout 120s
 
   release:
     needs: test
@@ -32,101 +42,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check if code changed
-        id: changes
-        run: |
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -z "$LATEST_TAG" ]; then
-            echo "skip=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          CODE_CHANGES=$(git diff --name-only "$LATEST_TAG"..HEAD -- '*.go' 'go.mod' 'go.sum' | wc -l)
-          if [ "$CODE_CHANGES" -eq 0 ]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "No code changes since $LATEST_TAG, skipping release"
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-            echo "$CODE_CHANGES code file(s) changed since $LATEST_TAG"
-          fi
-
       - uses: actions/setup-go@v5
-        if: steps.changes.outputs.skip == 'false'
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
 
-      - name: Determine version bump
-        if: steps.changes.outputs.skip == 'false'
+      - name: Resolve version
         id: version
         run: |
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
-          VERSION="${LATEST_TAG#v}"
-          MAJOR=$(echo "$VERSION" | cut -d. -f1)
-          MINOR=$(echo "$VERSION" | cut -d. -f2)
-          PATCH=$(echo "$VERSION" | cut -d. -f3)
-          COMMITS=$(git log "$LATEST_TAG"..HEAD --pretty=format:"%s" 2>/dev/null || git log --pretty=format:"%s")
-          BUMP="patch"
-          if echo "$COMMITS" | grep -qiE "^(BREAKING|breaking|!:)"; then
-            BUMP="major"
-          elif echo "$COMMITS" | grep -qiE "^feat"; then
-            BUMP="minor"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
           fi
-          case $BUMP in
-            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH + 1)) ;;
-          esac
-          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-          echo "bump=$BUMP" >> $GITHUB_OUTPUT
-          echo "Version: $LATEST_TAG -> $NEW_VERSION ($BUMP)"
-
-      - name: Generate changelog
-        if: steps.changes.outputs.skip == 'false'
-        id: changelog
-        run: |
-          LATEST_TAG=${{ steps.version.outputs.latest_tag }}
-          {
-            echo "changelog<<EOF"
-            echo "## Changes"
-            echo ""
-            FEATS=$(git log "$LATEST_TAG"..HEAD --pretty=format:"- %s" --grep="^feat" 2>/dev/null)
-            FIXES=$(git log "$LATEST_TAG"..HEAD --pretty=format:"- %s" --grep="^fix" 2>/dev/null)
-            OTHER=$(git log "$LATEST_TAG"..HEAD --pretty=format:"- %s" --invert-grep --grep="^feat" --grep="^fix" 2>/dev/null)
-            if [ -n "$FEATS" ]; then
-              echo "### Features"
-              echo "$FEATS"
-              echo ""
-            fi
-            if [ -n "$FIXES" ]; then
-              echo "### Bug Fixes"
-              echo "$FIXES"
-              echo ""
-            fi
-            if [ -n "$OTHER" ]; then
-              echo "### Other"
-              echo "$OTHER"
-              echo ""
-            fi
-            echo "EOF"
-          } >> $GITHUB_OUTPUT
-
-      - name: Update README version
-        if: steps.changes.outputs.skip == 'false'
-        run: |
-          VERSION=${{ steps.version.outputs.new_version }}
-          sed -i "s/ryofuzz v[0-9]*\.[0-9]*\.[0-9]*/ryofuzz $VERSION/g" README.md
-          sed -i "s/What is new in v[0-9]*\.[0-9]*\.[0-9]*/What is new in $VERSION/" README.md
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add README.md
-          git diff --cached --quiet || git commit -m "docs: bump README version to $VERSION [skip ci]"
-          git push
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Releasing $VERSION"
 
       - name: Build binaries
-        if: steps.changes.outputs.skip == 'false'
         run: |
-          VERSION=${{ steps.version.outputs.new_version }}
+          VERSION=${{ steps.version.outputs.version }}
           LDFLAGS="-s -w -X main.version=$VERSION -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           mkdir -p dist
           GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/ryofuzz-linux-amd64 .
@@ -136,16 +69,31 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/ryofuzz-windows-amd64.exe .
 
       - name: Generate checksums
-        if: steps.changes.outputs.skip == 'false'
         run: cd dist && sha256sum * > checksums.txt
 
+      - name: Generate SBOM (syft)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/ryofuzz.sbom.spdx.json
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign checksums (keyless)
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/checksums.txt.sig \
+            --output-certificate dist/checksums.txt.pem \
+            dist/checksums.txt
+
       - name: Create release
-        if: steps.changes.outputs.skip == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.new_version }}
-          name: ${{ steps.version.outputs.new_version }}
-          body: ${{ steps.changelog.outputs.changelog }}
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          generate_release_notes: true
           files: |
             dist/ryofuzz-linux-amd64
             dist/ryofuzz-linux-arm64
@@ -153,3 +101,6 @@ jobs:
             dist/ryofuzz-darwin-arm64
             dist/ryofuzz-windows-amd64.exe
             dist/checksums.txt
+            dist/checksums.txt.sig
+            dist/checksums.txt.pem
+            dist/ryofuzz.sbom.spdx.json
