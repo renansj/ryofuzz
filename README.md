@@ -469,6 +469,11 @@ Response bodies are read with a size cap (`--max-body`, default 10 MB) so a
 huge or hostile response cannot exhaust memory. TLS verification is skipped by
 default for pentest targets; pass `--verify-tls` to enforce it.
 
+Use `--scope` to restrict a scan to specific hosts or domains; out-of-scope
+targets are refused. Internal, private and cloud-metadata addresses (RFC1918,
+loopback, 169.254.169.254) are blocked unless you pass `--allow-internal`,
+which reduces the chance of accidental SSRF or hitting out-of-scope hosts.
+
 Press Ctrl+C to stop a scan cleanly: in-flight requests are aborted, no new
 payloads are sent, and the partial report is printed instead of the process
 being killed and the results lost.
@@ -504,6 +509,8 @@ Safety:
       --allow-destructive    Enable destructive payloads (DROP TABLE, xp_cmdshell, LOAD_FILE, UTL_HTTP). Off by default.
       --verify-tls           Verify TLS certificates (default: skip verification for pentest targets)
       --max-body int         Max response body read per request in KB (default 10240)
+      --scope strings        Restrict requests to these hosts/domains (repeatable). Out-of-scope targets refused.
+      --allow-internal       Allow internal/private/metadata targets (RFC1918, loopback, 169.254.169.254). Off by default.
 
 Output:
   -o, --output string        Output file
